@@ -1,9 +1,9 @@
-in {
-  "guildId": {
+{
+  "828932059258945566": {
     "verify": {
       "enabled": true,
-      "channelId": "828932059258945566",
-      "messageId": "987654321098765432",
+      "channelId": "1420758099274240010",
+      "messageId": "1421407464158531716",
       "prompt": "Click Verify to start.",
       "rolesOnJoin": ["1420757337395691590"],
       "rolesOnVerify": ["840763928479924235"]
