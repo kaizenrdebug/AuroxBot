@@ -104,7 +104,7 @@ if (Date.now() - lastSent < 1000 * 60 * 60 * 24 * 10) {
 
     try {
       message = await channel.send({
-        content: '@here',
+        content: '@Visitor ',
         embeds: [embed],
         components: [row]
       });
@@ -565,7 +565,7 @@ app.post('/api/settings', isAuthenticated, async (req, res) => {
         .setColor('#0099ff');
       try {
         const message = await channel.send({
-          content: '@here',
+          content: '@Visitor',
           embeds: [embed],
           components: [row]
         });
@@ -626,7 +626,7 @@ app.post('/api/test-verify/:id', isAuthenticated, async (req, res) => {
         .setDescription(prompt)
         .setColor('#0099ff');
       try {
-        message = await channel.send({ content: '@here', embeds: [embed], components: [row] });
+        message = await channel.send({ content: '@Visitor', embeds: [embed], components: [row] });
         settingsStore[guildId].verify = settingsStore[guildId].verify || {};
         settingsStore[guildId].verify.messageId = message.id;
         saveSettings();
@@ -650,6 +650,7 @@ app.listen(PORT, () => {
 });
 
 client.login(BOT_TOKEN);
+
 
 
 
