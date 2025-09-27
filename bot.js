@@ -56,59 +56,66 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-// Send or fetch verification message on bot startup
 client.once(Events.ClientReady, async () => {
   console.log('Bot ready as', client.user.tag);
+
   for (const guild of client.guilds.cache.values()) {
     const guildId = guild.id;
     const cfg = settingsStore[guildId];
-    if (!cfg || !cfg.verify || !cfg.verify.enabled || !cfg.verify.channelId) {
+    if (!cfg?.verify?.enabled || !cfg.verify.channelId) {
       console.log(`Skipping guild ${guildId}: Verification not enabled or channel not set`);
       continue;
     }
 
     const channel = await guild.channels.fetch(cfg.verify.channelId).catch(() => null);
-    if (!channel || !channel.isTextBased()) {
+    if (!channel?.isTextBased()) {
       console.warn(`Verify channel ${cfg.verify.channelId} invalid or not text-based for guild ${guildId}`);
-      delete settingsStore[guildId].verify;
-      saveSettings();
       continue;
     }
 
-    const botMember = await guild.members.fetch(client.user.id).catch(() => null);
-    if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
-      console.warn(`Bot lacks ViewChannel, SendMessages, ReadMessageHistory, or EmbedLinks permissions in channel ${cfg.verify.channelId} for guild ${guildId}`);
-      continue;
-    }
-
+    // Reuse existing message if available
     const messageId = cfg.verify.messageId;
-    let message = messageId ? await channel.messages.fetch(messageId).catch(() => null) : null;
-    if (!message) {
-      const prompt = cfg.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
-      const verifyButton = new ButtonBuilder()
-        .setCustomId('verify')
-        .setLabel('Verify')
-        .setStyle(ButtonStyle.Primary);
-      const row = new ActionRowBuilder().addComponents(verifyButton);
-      const embed = new EmbedBuilder()
-        .setTitle('VERIFICATION SECTION')
-        .setDescription(prompt)
-        .setColor('#0099ff');
-      try {
-        message = await channel.send({
-          content: '@here',
-          embeds: [embed],
-          components: [row]
-        });
-        settingsStore[guildId].verify = settingsStore[guildId].verify || {};
-        settingsStore[guildId].verify.messageId = message.id;
-        saveSettings();
-        console.log(`Sent verification message with @here and embed for guild ${guildId}, message ID: ${message.id}`);
-      } catch (e) {
-        console.error(`Failed to send verification message in guild ${guildId}:`, e);
-      }
-    } else {
-      console.log(`Found existing verification message for guild ${guildId}, message ID: ${messageId}`);
+    let message = messageId
+      ? await channel.messages.fetch({ message: messageId, cache: false }).catch(() => null)
+      : null;
+
+    // If a message exists, skip sending a new one
+    if (message) {
+      console.log(`Found existing verification message for guild ${guildId}, message ID: ${message.id}`);
+      continue;
+    }
+
+    // Optional: 10-minute cooldown to avoid spamming if lastSent exists
+    const lastSent = cfg.verify.lastSent || 0;
+    if (Date.now() - lastSent < 1000 * 60 * 10) {
+      console.log(`Skipping sending verification for guild ${guildId}: recently sent`);
+      continue;
+    }
+
+    // Send new verification message
+    const prompt = cfg.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
+    const verifyButton = new ButtonBuilder()
+      .setCustomId('verify')
+      .setLabel('Verify')
+      .setStyle(ButtonStyle.Primary);
+    const row = new ActionRowBuilder().addComponents(verifyButton);
+    const embed = new EmbedBuilder()
+      .setTitle('VERIFICATION SECTION')
+      .setDescription(prompt)
+      .setColor('#0099ff');
+
+    try {
+      message = await channel.send({
+        content: '@here',
+        embeds: [embed],
+        components: [row]
+      });
+      settingsStore[guildId].verify.messageId = message.id;
+      settingsStore[guildId].verify.lastSent = Date.now(); // save last sent time
+      saveSettings();
+      console.log(`Sent verification message for guild ${guildId}, message ID: ${message.id}`);
+    } catch (e) {
+      console.error(`Failed to send verification message in guild ${guildId}:`, e);
     }
   }
 });
@@ -648,3 +655,4 @@ app.listen(PORT, () => {
 });
 
 client.login(BOT_TOKEN);
+
