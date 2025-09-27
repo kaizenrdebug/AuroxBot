@@ -430,14 +430,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // Express dashboard + OAuth routes
 const app = express();
 app.use(express.json());
-app.use(express.urlencoded({ extended: true));
+app.use(express.urlencoded({ extended: true }));
 app.use(session({
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: { maxAge: 1000 * 60 * 60 * 24 }
 }));
-
 app.use(express.static('.'));
 
 function isAuthenticated(req, res, next) {
@@ -560,7 +559,6 @@ app.post('/api/settings', isAuthenticated, async (req, res) => {
       const row = new ActionRowBuilder().addComponents(verifyButton);
       const embed = new EmbedBuilder()
         .setTitle('VERIFICATION SECTION')
-        .setDescription chalk
         .setDescription(prompt)
         .setColor('#0099ff');
       try {
