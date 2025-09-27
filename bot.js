@@ -63,14 +63,12 @@ client.once(Events.ClientReady, async () => {
       continue;
     }
 
-    // Check bot permissions
     const botMember = await guild.members.fetch(client.user.id).catch(() => null);
     if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages])) {
       console.warn(`Bot lacks ViewChannel or SendMessages permissions in channel ${cfg.verify.channelId} for guild ${guildId}`);
       continue;
     }
 
-    // Check if verification message exists
     const messageId = cfg.verify.messageId;
     let message = messageId ? await channel.messages.fetch(messageId).catch(() => null) : null;
     if (!message) {
@@ -98,7 +96,7 @@ client.once(Events.ClientReady, async () => {
 
 // CAPTCHA generation helper
 function randomText(len = 6) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Avoid confusing chars
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let s = '';
   for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
@@ -184,7 +182,9 @@ client.on('guildMemberAdd', async (member) => {
       try {
         const role = member.guild.roles.cache.get(r) || member.guild.roles.cache.find(x => x.name === r);
         if (role) await member.roles.add(role).catch(() => null);
-      } catch (e) {}
+      } catch (e) {
+        console.error(`Failed to add role ${r} to member ${member.id} in guild ${guildId}:`, e);
+      }
     }
   } catch (err) {
     console.error('Error on guildMemberAdd:', err);
@@ -194,20 +194,29 @@ client.on('guildMemberAdd', async (member) => {
 // Interaction handling (buttons + modal)
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    if (interaction.isButton()) {
-      const custom = interaction.customId;
-      if (custom !== 'verify') return;
+    // Defer interaction to avoid timeout
+    if (interaction.isButton() || interaction.isModalSubmit()) {
+      await interaction.deferReply({ ephemeral: true });
+    }
 
+    if (interaction.isButton() && interaction.customId === 'verify') {
       const guildId = interaction.guildId;
       const cfg = settingsStore[guildId];
       if (!cfg || !cfg.verify || !cfg.verify.enabled) {
-        await interaction.reply({ content: 'Verification is not enabled for this server.', ephemeral: true });
+        await interaction.editReply({ content: 'Verification is not enabled for this server.' });
         return;
       }
 
       const answer = randomText(6);
       const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
-      const { buffer, text } = await createCaptchaImage({ text: answer, avatarURL }).catch(e => { throw e; });
+      let buffer, text;
+      try {
+        ({ buffer, text } = await createCaptchaImage({ text: answer, avatarURL }));
+      } catch (e) {
+        console.error(`Failed to generate captcha for ${guildId}:${interaction.user.id}:`, e);
+        await interaction.editReply({ content: 'Failed to generate captcha. Please try again.' });
+        return;
+      }
 
       const key = `${guildId}:${interaction.user.id}`;
       captchaMap.set(key, { answer, expires: Date.now() + 1000 * 60 * 5 });
@@ -220,22 +229,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setStyle(ButtonStyle.Success);
       const row = new ActionRowBuilder().addComponents(enter);
 
-      await interaction.reply({
+      await interaction.editReply({
         content: 'Solve the captcha shown below and click *Enter solution* to type your answer.',
         files: [attachment],
-        components: [row],
-        ephemeral: true
+        components: [row]
       });
 
       return;
     }
 
-    if (interaction.type === InteractionType.ModalSubmit) {
-      const custom = interaction.customId;
-      if (!custom.startsWith('modal_')) return;
-      const userId = custom.split('_')[1];
+    if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('modal_')) {
+      const userId = interaction.customId.split('_')[1];
       if (userId !== interaction.user.id) {
-        await interaction.reply({ content: 'This modal is not for you.', ephemeral: true });
+        await interaction.editReply({ content: 'This modal is not for you.' });
         return;
       }
       const rawAnswer = interaction.fields.getTextInputValue('captcha_answer');
@@ -243,12 +249,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const key = `${interaction.guildId}:${interaction.user.id}`;
       const stored = captchaMap.get(key);
       if (!stored) {
-        await interaction.reply({ content: 'No captcha found or it expired. Please click Verify again.', ephemeral: true });
+        await interaction.editReply({ content: 'No captcha found or it expired. Please click Verify again.' });
         return;
       }
       if (Date.now() > stored.expires) {
         captchaMap.delete(key);
-        await interaction.reply({ content: 'Captcha expired. Please click Verify again.', ephemeral: true });
+        await interaction.editReply({ content: 'Captcha expired. Please click Verify again.' });
         return;
       }
 
@@ -260,7 +266,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
         if (!member) {
-          await interaction.reply({ content: 'Member not found in guild.', ephemeral: true });
+          await interaction.editReply({ content: 'Member not found in guild.' });
           return;
         }
 
@@ -270,28 +276,32 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (role && !rolesOnVerify.includes(role.id) && !rolesOnVerify.includes(role.name)) {
               await member.roles.remove(role).catch(() => null);
             }
-          } catch (e) {}
+          } catch (e) {
+            console.error(`Failed to remove role ${r} from member ${interaction.user.id}:`, e);
+          }
         }
 
         for (const r of rolesOnVerify) {
           try {
             const role = interaction.guild.roles.cache.get(r) || interaction.guild.roles.cache.find(x => x.name === r);
             if (role) await member.roles.add(role).catch(() => null);
-          } catch (e) {}
+          } catch (e) {
+            console.error(`Failed to add role ${r} to member ${interaction.user.id}:`, e);
+          }
         }
 
         captchaMap.delete(key);
-        await interaction.reply({ content: '✅ Verified! Roles have been updated.', ephemeral: true });
+        await interaction.editReply({ content: '✅ Verified! Roles have been updated.' });
       } else {
         captchaMap.delete(key);
-        await interaction.reply({ content: '❌ Wrong answer. Click **Verify** again to get a new captcha.', ephemeral: true });
+        await interaction.editReply({ content: '❌ Wrong answer. Click **Verify** again to get a new captcha.' });
       }
       return;
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('enter_')) {
       if (interaction.customId.split('_')[1] !== interaction.user.id) {
-        await interaction.reply({ content: 'This enter button is not for you.', ephemeral: true });
+        await interaction.editReply({ content: 'This enter button is not for you.' });
         return;
       }
       await interaction.showModal(
@@ -307,8 +317,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   } catch (err) {
     console.error('Interaction handler error:', err);
-    if (interaction && !interaction.replied) {
-      try { await interaction.reply({ content: 'An error occurred.', ephemeral: true }); } catch (e) {}
+    if (interaction && !interaction.replied && !interaction.deferred) {
+      try { await interaction.reply({ content: 'An error occurred. Please try again.', ephemeral: true }); } catch (e) {}
+    } else if (interaction && interaction.deferred) {
+      try { await interaction.editReply({ content: 'An error occurred. Please try again.' }); } catch (e) {}
     }
   }
 });
