@@ -3,7 +3,7 @@
     "verify": {
       "enabled": true,
       "channelId": "1416378250518597735",
-      "prompt": "Click **Verify** to start. You will receive a captcha to solve.",
+      "prompt": " :arrow_orange: Click **Verify** to start. You will receive a captcha to solve. :thumbsup~1:",
       "rolesOnJoin": [
         "1420757337395691590"
       ],
