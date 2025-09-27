@@ -1,4 +1,4 @@
-// bot.js — Full verifier + dashboard backend
+// bot.js made by aurox.x(dc)
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -36,23 +36,50 @@ function saveSettings() {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settingsStore, null, 2));
 }
 
-// ephemeral captcha answers (in-memory) map: key = guildId:userId -> {answer, expires}
 const captchaMap = new Map();
 
-// Discord client
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages],
   partials: [Partials.Channel]
 });
 
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log('Bot ready as', client.user.tag);
+
+  for (const guild of client.guilds.cache.values()) {
+    const guildId = guild.id;
+    const cfg = settingsStore[guildId];
+    if (!cfg || !cfg.verify || !cfg.verify.enabled || !cfg.verify.channelId) continue;
+
+    const channel = await guild.channels.fetch(cfg.verify.channelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) {
+      console.warn(`Verify channel not available for guild ${guildId}`);
+      continue;
+    }
+
+    const messageId = cfg.verify.messageId;
+    let message = messageId ? await channel.messages.fetch(messageId).catch(() => null) : null;
+    if (!message) {
+      // Send new verification message with @here
+      const prompt = cfg.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
+      const verifyButton = new ButtonBuilder()
+        .setCustomId('verify')
+        .setLabel('Verify')
+        .setStyle(ButtonStyle.Primary);
+      const row = new ActionRowBuilder().addComponents(verifyButton);
+      message = await channel.send({
+        content: `@here ${prompt}`,
+        components: [row]
+      });
+      settingsStore[guildId].verify.messageId = message.id;
+      saveSettings();
+      console.log(`Sent verification message with @here for guild ${guildId}`);
+    }
+  }
 });
 
-// ---------- CAPTCHA generation helper ----------
-/**
- * Generates a random alphanumeric string
- */
+// ---------- CAPTCHA generation helper | dont modify contents hre if u dont knowwhat ya doing ----------
+
 function randomText(len = 6) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // avoid confusing chars
   let s = '';
@@ -156,27 +183,6 @@ client.on('guildMemberAdd', async (member) => {
         if (role) await member.roles.add(role).catch(() => null);
       } catch (e) {}
     }
-
-    // send verify message to configured channel
-    const channelId = cfg.verify.channelId;
-    const channel = channelId ? await member.guild.channels.fetch(channelId).catch(() => null) : null;
-    const prompt = cfg.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
-    if (!channel || !channel.isTextBased()) {
-      console.warn('Verify channel not available for guild', guildId);
-      return;
-    }
-
-    const verifyButton = new ButtonBuilder()
-      .setCustomId('verify')
-      .setLabel('Verify')
-      .setStyle(ButtonStyle.Primary);
-
-    const row = new ActionRowBuilder().addComponents(verifyButton);
-
-    await channel.send({
-      content: `@here ${prompt}`,
-      components: [row]
-    });
   } catch (err) {
     console.error('Error on guildMemberAdd:', err);
   }
@@ -200,11 +206,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // generate captcha and store answer
       const answer = randomText(6);
       const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
-      const { buffer, text } = await createCaptchaImage({ text: answer, avatarURL }).catch(e=>{ throw e; });
+      const { buffer, text } = await createCaptchaImage({ text: answer, avatarURL }).catch(e => { throw e; });
 
       // store captcha
       const key = `${guildId}:${interaction.user.id}`;
       captchaMap.set(key, { answer, expires: Date.now() + 1000 * 60 * 5 }); // 5min
+      console.log(`Generated captcha for ${key}: ${answer}`);
 
       // send ephemeral with image and a modal trigger
       const attachment = new AttachmentBuilder(buffer, { name: 'captcha.png' });
@@ -235,7 +242,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({ content: 'This modal is not for you.', ephemeral: true });
         return;
       }
-      const answer = interaction.fields.getTextInputValue('captcha_answer').trim();
+      const answer = interaction.fields.getTextInputValue('captcha_answer').trim().toUpperCase();
       const key = `${interaction.guildId}:${interaction.user.id}`;
       const stored = captchaMap.get(key);
       if (!stored) {
@@ -248,14 +255,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (answer.toUpperCase() === stored.answer.toUpperCase()) {
+      console.log(`Comparing: submitted='${answer}', stored='${stored.answer.toUpperCase()}'`);
+      if (answer === stored.answer.toUpperCase()) {
         // success: assign rolesOnVerify, remove rolesOnJoin (unless also in onVerify)
         const cfg = settingsStore[interaction.guildId];
         const rolesOnJoin = (cfg?.verify?.rolesOnJoin) || [];
         const rolesOnVerify = (cfg?.verify?.rolesOnVerify) || [];
 
         // fetch member
-        const member = await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
+        const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
         if (!member) {
           await interaction.reply({ content: 'Member not found in guild.', ephemeral: true });
           return;
@@ -266,23 +274,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
           try {
             const role = interaction.guild.roles.cache.get(r) || interaction.guild.roles.cache.find(x => x.name === r);
             if (role && !rolesOnVerify.includes(role.id) && !rolesOnVerify.includes(role.name)) {
-              await member.roles.remove(role).catch(()=>null);
+              await member.roles.remove(role).catch(() => null);
             }
-          } catch(e){}
+          } catch (e) {}
         }
 
         // add rolesOnVerify
         for (const r of rolesOnVerify) {
           try {
             const role = interaction.guild.roles.cache.get(r) || interaction.guild.roles.cache.find(x => x.name === r);
-            if (role) await member.roles.add(role).catch(()=>null);
-          } catch(e){}
+            if (role) await member.roles.add(role).catch(() => null);
+          } catch (e) {}
         }
 
         captchaMap.delete(key);
         await interaction.reply({ content: '✅ Verified! Roles have been updated.', ephemeral: true });
       } else {
-        // wrong answer: keep attempts? For simplicity, allow retry
+        // wrong answer: allow retry
         captchaMap.delete(key);
         await interaction.reply({ content: '❌ Wrong answer. Click **Verify** again to get a new captcha.', ephemeral: true });
       }
@@ -305,7 +313,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   } catch (err) {
     console.error('Interaction handler error:', err);
     if (interaction && !interaction.replied) {
-      try { await interaction.reply({ content: 'An error occurred.', ephemeral: true }); } catch(e){}
+      try { await interaction.reply({ content: 'An error occurred.', ephemeral: true }); } catch (e) {}
     }
   }
 });
@@ -346,7 +354,7 @@ app.use(session({
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 1000*60*60*24 } // 1 day
+  cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day
 }));
 
 // serve dashboard static
@@ -365,7 +373,7 @@ app.get('/login', (req, res) => {
 });
 
 app.get('/logout', (req, res) => {
-  req.session.destroy(()=>{ res.redirect('/'); });
+  req.session.destroy(() => { res.redirect('/'); });
 });
 
 // OAuth callback
@@ -379,11 +387,11 @@ app.get('/callback', async (req, res) => {
     params.append('grant_type', 'authorization_code');
     params.append('code', code);
     params.append('redirect_uri', REDIRECT_URI);
-    const tokenRes = await axios.post('https://discord.com/api/oauth2/token', params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }});
+    const tokenRes = await axios.post('https://discord.com/api/oauth2/token', params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
     const accessToken = tokenRes.data.access_token;
     // fetch user and guilds
-    const me = await axios.get('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${accessToken}` } }).then(r=>r.data);
-    const guilds = await axios.get('https://discord.com/api/users/@me/guilds', { headers: { Authorization: `Bearer ${accessToken}` } }).then(r=>r.data);
+    const me = await axios.get('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${accessToken}` } }).then(r => r.data);
+    const guilds = await axios.get('https://discord.com/api/users/@me/guilds', { headers: { Authorization: `Bearer ${accessToken}` } }).then(r => r.data);
     req.session.user = me;
     req.session.guilds = guilds;
     res.redirect('/');
@@ -444,18 +452,49 @@ app.post('/api/settings', isAuthenticated, async (req, res) => {
 
     const guildId = body.guildId;
     // permission check: ensure the logged-in user is a guild manager
-    const guild = await client.guilds.fetch(guildId).catch(()=>null);
+    const guild = await client.guilds.fetch(guildId).catch(() => null);
     if (!guild) return res.status(404).json({ error: 'Guild not found or bot not present' });
 
-    const member = await guild.members.fetch(req.session.user.id).catch(()=>null);
+    const member = await guild.members.fetch(req.session.user.id).catch(() => null);
     if (!member) return res.status(403).json({ error: 'You must be a guild member' });
     if (!member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
       return res.status(403).json({ error: 'Manage Guild permission required' });
     }
 
-    // store settings (only verify section)
+    // Update settings and handle verification message
     settingsStore[guildId] = settingsStore[guildId] || {};
+    const oldChannelId = settingsStore[guildId].verify?.channelId;
     settingsStore[guildId].verify = body.verify || settingsStore[guildId].verify || { enabled: false };
+
+    // If verification is enabled or channel changed, update message
+    if (settingsStore[guildId].verify.enabled && (body.verify.channelId !== oldChannelId || !settingsStore[guildId].verify.messageId)) {
+      const channel = await guild.channels.fetch(body.verify.channelId).catch(() => null);
+      if (channel && channel.isTextBased()) {
+        // Delete old message if exists
+        if (settingsStore[guildId].verify.messageId && oldChannelId) {
+          const oldChannel = await guild.channels.fetch(oldChannelId).catch(() => null);
+          if (oldChannel) await oldChannel.messages.delete(settingsStore[guildId].verify.messageId).catch(() => null);
+        }
+        // Send new message
+        const prompt = body.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
+        const verifyButton = new ButtonBuilder()
+          .setCustomId('verify')
+          .setLabel('Verify')
+          .setStyle(ButtonStyle.Primary);
+        const row = new ActionRowBuilder().addComponents(verifyButton);
+        const message = await channel.send({
+          content: `@here ${prompt}`,
+          components: [row]
+        });
+        settingsStore[guildId].verify.messageId = message.id;
+      }
+    } else if (!settingsStore[guildId].verify.enabled && settingsStore[guildId].verify.messageId) {
+      // If disabled, delete message
+      const channel = await guild.channels.fetch(oldChannelId).catch(() => null);
+      if (channel) await channel.messages.delete(settingsStore[guildId].verify.messageId).catch(() => null);
+      delete settingsStore[guildId].verify.messageId;
+    }
+
     saveSettings();
     return res.json({ success: true });
   } catch (err) {
@@ -468,22 +507,28 @@ app.post('/api/settings', isAuthenticated, async (req, res) => {
 app.post('/api/test-verify/:id', isAuthenticated, async (req, res) => {
   const guildId = req.params.id;
   try {
-    const guild = await client.guilds.fetch(guildId).catch(()=>null);
+    const guild = await client.guilds.fetch(guildId).catch(() => null);
     if (!guild) return res.status(404).json({ error: 'Guild not found' });
-    const member = await guild.members.fetch(req.session.user.id).catch(()=>null);
+    const member = await guild.members.fetch(req.session.user.id).catch(() => null);
     if (!member) return res.status(403).json({ error: 'You must be a member' });
     if (!member.permissions.has(PermissionsBitField.Flags.ManageGuild)) return res.status(403).json({ error: 'Manage Guild required' });
 
     const cfg = settingsStore[guildId];
     if (!cfg || !cfg.verify || !cfg.verify.channelId) return res.status(400).json({ error: 'Verify channel not configured' });
 
-    const channel = await guild.channels.fetch(cfg.verify.channelId).catch(()=>null);
+    const channel = await guild.channels.fetch(cfg.verify.channelId).catch(() => null);
     if (!channel || !channel.isTextBased()) return res.status(404).json({ error: 'Verify channel not found' });
 
-    const prompt = cfg.verify.prompt || 'Click Verify to start.';
-    const btn = new ButtonBuilder().setCustomId('verify').setLabel('Verify').setStyle(ButtonStyle.Primary);
-    const row = new ActionRowBuilder().addComponents(btn);
-    await channel.send({ content: `@here ${prompt}`, components: [row] });
+    // Check if message exists; if not, send one
+    let message = cfg.verify.messageId ? await channel.messages.fetch(cfg.verify.messageId).catch(() => null) : null;
+    if (!message) {
+      const prompt = cfg.verify.prompt || 'Click Verify to start.';
+      const btn = new ButtonBuilder().setCustomId('verify').setLabel('Verify').setStyle(ButtonStyle.Primary);
+      const row = new ActionRowBuilder().addComponents(btn);
+      message = await channel.send({ content: `@here ${prompt}`, components: [row] });
+      settingsStore[guildId].verify.messageId = message.id;
+      saveSettings();
+    }
     return res.json({ success: true });
   } catch (err) {
     console.error('test verify error', err);
@@ -498,3 +543,4 @@ app.listen(PORT, () => {
 
 // login discord bot
 client.login(BOT_TOKEN);
+```
