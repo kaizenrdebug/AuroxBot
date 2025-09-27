@@ -6,7 +6,7 @@ const express = require('express');
 const session = require('express-session');
 const axios = require('axios');
 const { createCanvas, loadImage } = require('canvas');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder } = require('discord.js');
 
 const PORT = process.env.DASHBOARD_PORT || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'change_this_secret';
@@ -28,7 +28,6 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 let settingsStore = {};
 try {
   settingsStore = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8') || '{}');
-  // Validate settings
   for (const guildId in settingsStore) {
     if (!settingsStore[guildId]?.verify || typeof settingsStore[guildId].verify.enabled !== 'boolean' || !settingsStore[guildId].verify.channelId) {
       console.warn(`Invalid settings for guild ${guildId}, resetting verify config`);
@@ -77,8 +76,8 @@ client.once(Events.ClientReady, async () => {
     }
 
     const botMember = await guild.members.fetch(client.user.id).catch(() => null);
-    if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory])) {
-      console.warn(`Bot lacks ViewChannel, SendMessages, or ReadMessageHistory permissions in channel ${cfg.verify.channelId} for guild ${guildId}`);
+    if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
+      console.warn(`Bot lacks ViewChannel, SendMessages, ReadMessageHistory, or EmbedLinks permissions in channel ${cfg.verify.channelId} for guild ${guildId}`);
       continue;
     }
 
@@ -91,15 +90,20 @@ client.once(Events.ClientReady, async () => {
         .setLabel('Verify')
         .setStyle(ButtonStyle.Primary);
       const row = new ActionRowBuilder().addComponents(verifyButton);
+      const embed = new EmbedBuilder()
+        .setTitle('VERIFICATION SECTION')
+        .setDescription(prompt)
+        .setColor('#0099ff');
       try {
         message = await channel.send({
-          content: `@here ${prompt}`,
+          content: '@here',
+          embeds: [embed],
           components: [row]
         });
         settingsStore[guildId].verify = settingsStore[guildId].verify || {};
         settingsStore[guildId].verify.messageId = message.id;
         saveSettings();
-        console.log(`Sent verification message with @here for guild ${guildId}, message ID: ${message.id}`);
+        console.log(`Sent verification message with @here and embed for guild ${guildId}, message ID: ${message.id}`);
       } catch (e) {
         console.error(`Failed to send verification message in guild ${guildId}:`, e);
       }
@@ -228,10 +232,14 @@ client.on('guildMemberAdd', async (member) => {
 // Interaction handling (buttons + modal)
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    console.log(`Processing interaction: type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}`);
-    
+    console.log(`Processing interaction: type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}, isRepliable=${interaction.isRepliable()}, token=${interaction.token.slice(0, 10)}...`);
+
     // Defer interaction to avoid timeout
     if (interaction.isButton() || interaction.isModalSubmit()) {
+      if (!interaction.isRepliable()) {
+        console.warn(`Interaction not repliable: type=${interaction.type}, customId=${interaction.customId}, user=${interaction.user.id}`);
+        return;
+      }
       await interaction.deferReply({ ephemeral: true });
     }
 
@@ -241,6 +249,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!cfg || !cfg.verify || !cfg.verify.enabled || !cfg.verify.channelId) {
         console.warn(`Verification not configured or disabled for guild ${guildId}`);
         await interaction.editReply({ content: 'Verification is not enabled for this server. Contact an admin.' });
+        return;
+      }
+
+      const channel = await interaction.guild.channels.fetch(cfg.verify.channelId).catch(() => null);
+      if (!channel || !channel.isTextBased()) {
+        console.warn(`Verify channel ${cfg.verify.channelId} invalid for guild ${guildId}`);
+        await interaction.editReply({ content: 'Verification channel is invalid. Contact an admin.' });
+        return;
+      }
+
+      const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
+      if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.EmbedLinks])) {
+        console.warn(`Bot lacks ViewChannel, SendMessages, or EmbedLinks permissions in channel ${cfg.verify.channelId} for guild ${guildId}`);
+        await interaction.editReply({ content: 'Bot lacks permissions to send messages in the verification channel.' });
         return;
       }
 
@@ -282,7 +304,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
       const rawAnswer = interaction.fields.getTextInputValue('captcha_answer');
-      // Log raw input as hex to detect invisible characters
       const rawAnswerHex = Buffer.from(rawAnswer, 'utf8').toString('hex');
       const answer = rawAnswer.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
       const key = `${interaction.guildId}:${interaction.user.id}`;
@@ -357,29 +378,47 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('enter_')) {
-      if (interaction.customId.split('_')[1] !== interaction.user.id) {
+      const userId = interaction.customId.split('_')[1];
+      if (userId !== interaction.user.id) {
         await interaction.editReply({ content: 'This enter button is not for you.' });
         return;
       }
-      try {
-        await interaction.showModal(
-          new ModalBuilder()
-            .setCustomId(`modal_${interaction.user.id}`)
-            .setTitle('Enter captcha')
-            .addComponents(
-              new ActionRowBuilder().addComponents(
-                new TextInputBuilder().setCustomId('captcha_answer').setLabel('Captcha text').setStyle(TextInputStyle.Short).setRequired(true)
-              )
-            )
+      if (!interaction.isRepliable()) {
+        console.warn(`Cannot show modal: Interaction not repliable for user ${interaction.user.id}, customId=${interaction.customId}, token=${interaction.token.slice(0, 10)}...`);
+        await interaction.followUp({ content: 'Unable to show captcha modal. Please try again.', ephemeral: true });
+        return;
+      }
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_${interaction.user.id}`)
+        .setTitle('Enter captcha')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('captcha_answer')
+              .setLabel('Captcha text')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          )
         );
-        console.log(`Showed captcha modal to user ${interaction.user.id} in guild ${interaction.guildId}`);
-      } catch (e) {
-        console.error(`Failed to show modal for user ${interaction.user.id} in guild ${interaction.guildId}:`, e);
-        await interaction.editReply({ content: 'Failed to show captcha modal. Please try again.' });
+      let attempts = 2;
+      while (attempts > 0) {
+        try {
+          await interaction.showModal(modal);
+          console.log(`Showed captcha modal to user ${interaction.user.id} in guild ${interaction.guildId}`);
+          return;
+        } catch (e) {
+          console.error(`Attempt ${3 - attempts}/2: Failed to show modal for user ${interaction.user.id} in guild ${interaction.guildId}: ${e.message} (code: ${e.code || 'unknown'})`);
+          attempts--;
+          if (attempts === 0) {
+            await interaction.editReply({ content: 'Failed to show captcha modal after retries. Please try again.' });
+            return;
+          }
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+        }
       }
     }
   } catch (err) {
-    console.error(`Interaction handler error for ${interaction.type} (customId: ${interaction.customId || 'none'}, user: ${interaction.user.id}, guild: ${interaction.guildId || 'none'}):`, err);
+    console.error(`Interaction handler error for type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}, token=${interaction.token?.slice(0, 10) || 'none'}...: ${err.message} (code: ${err.code || 'unknown'})`);
     if (interaction && !interaction.replied && !interaction.deferred) {
       try { await interaction.reply({ content: 'An error occurred. Please try again.', ephemeral: true }); } catch (e) {}
     } else if (interaction && interaction.deferred) {
@@ -391,7 +430,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // Express dashboard + OAuth routes
 const app = express();
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true));
 app.use(session({
   secret: SESSION_SECRET,
   resave: false,
@@ -499,8 +538,8 @@ app.post('/api/settings', isAuthenticated, async (req, res) => {
         return res.status(400).json({ error: `Invalid or non-text channel: ${body.verify.channelId}` });
       }
       const botMember = await guild.members.fetch(client.user.id).catch(() => null);
-      if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory])) {
-        return res.status(403).json({ error: `Bot lacks ViewChannel, SendMessages, or ReadMessageHistory permissions in channel ${body.verify.channelId}` });
+      if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
+        return res.status(403).json({ error: `Bot lacks ViewChannel, SendMessages, ReadMessageHistory, or EmbedLinks permissions in channel ${body.verify.channelId}` });
       }
       if (settingsStore[guildId].verify.messageId && oldChannelId) {
         const oldChannel = await guild.channels.fetch(oldChannelId).catch(() => null);
@@ -519,9 +558,15 @@ app.post('/api/settings', isAuthenticated, async (req, res) => {
         .setLabel('Verify')
         .setStyle(ButtonStyle.Primary);
       const row = new ActionRowBuilder().addComponents(verifyButton);
+      const embed = new EmbedBuilder()
+        .setTitle('VERIFICATION SECTION')
+        .setDescription chalk
+        .setDescription(prompt)
+        .setColor('#0099ff');
       try {
         const message = await channel.send({
-          content: `@here ${prompt}`,
+          content: '@here',
+          embeds: [embed],
           components: [row]
         });
         settingsStore[guildId].verify.messageId = message.id;
@@ -567,8 +612,8 @@ app.post('/api/test-verify/:id', isAuthenticated, async (req, res) => {
     if (!channel || !channel.isTextBased()) return res.status(404).json({ error: 'Verify channel not found' });
 
     const botMember = await guild.members.fetch(client.user.id).catch(() => null);
-    if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory])) {
-      return res.status(403).json({ error: `Bot lacks ViewChannel, SendMessages, or ReadMessageHistory permissions in channel ${cfg.verify.channelId}` });
+    if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
+      return res.status(403).json({ error: `Bot lacks ViewChannel, SendMessages, ReadMessageHistory, or EmbedLinks permissions in channel ${cfg.verify.channelId}` });
     }
 
     let message = cfg.verify.messageId ? await channel.messages.fetch(cfg.verify.messageId).catch(() => null) : null;
@@ -576,8 +621,12 @@ app.post('/api/test-verify/:id', isAuthenticated, async (req, res) => {
       const prompt = cfg.verify.prompt || 'Click Verify to start.';
       const btn = new ButtonBuilder().setCustomId('verify').setLabel('Verify').setStyle(ButtonStyle.Primary);
       const row = new ActionRowBuilder().addComponents(btn);
+      const embed = new EmbedBuilder()
+        .setTitle('VERIFICATION SECTION')
+        .setDescription(prompt)
+        .setColor('#0099ff');
       try {
-        message = await channel.send({ content: `@here ${prompt}`, components: [row] });
+        message = await channel.send({ content: '@here', embeds: [embed], components: [row] });
         settingsStore[guildId].verify = settingsStore[guildId].verify || {};
         settingsStore[guildId].verify.messageId = message.id;
         saveSettings();
