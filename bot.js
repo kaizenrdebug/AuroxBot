@@ -104,6 +104,10 @@ client.once(Events.ClientReady, async () => {
       .setDescription(prompt)
       .setColor('#0099ff');
 
+    if (cfg.verify.gifURL) {
+  embed.setImage(cfg.verify.gifURL);
+}
+
     try {
       message = await channel.send({
         content: '@here',
@@ -655,4 +659,5 @@ app.listen(PORT, () => {
 });
 
 client.login(BOT_TOKEN);
+
 
