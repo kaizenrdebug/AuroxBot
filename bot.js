@@ -20,7 +20,6 @@ if (!CLIENT_ID || !CLIENT_SECRET || !BOT_TOKEN) {
   process.exit(1);
 }
 
-// Simple JSON file persistence for settings
 const DATA_DIR = path.resolve(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
@@ -47,10 +46,8 @@ function saveSettings() {
   }
 }
 
-// Ephemeral captcha answers (in-memory) map: key = guildId:userId -> {answer, expires}
 const captchaMap = new Map();
 
-// Discord client
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages],
   partials: [Partials.Channel]
@@ -73,26 +70,23 @@ client.once(Events.ClientReady, async () => {
       continue;
     }
 
-    // Reuse existing message if available
     const messageId = cfg.verify.messageId;
     let message = messageId
       ? await channel.messages.fetch({ message: messageId, cache: false }).catch(() => null)
       : null;
 
-    // If a message exists, skip sending a new one
     if (message) {
       console.log(`Found existing verification message for guild ${guildId}, message ID: ${message.id}`);
       continue;
     }
 
-    // Optional: 10-minute cooldown to avoid spamming if lastSent exists
-    const lastSent = cfg.verify.lastSent || 0;
-    if (Date.now() - lastSent < 1000 * 60 * 10) {
-      console.log(`Skipping sending verification for guild ${guildId}: recently sent`);
-      continue;
-    }
+const lastSent = cfg.verify.lastSent || 0;
 
-    // Send new verification message
+if (Date.now() - lastSent < 1000 * 60 * 60 * 24 * 10) {
+  console.log(`Skipping sending verification for guild ${guildId}: recently sent`);
+  continue;
+}
+
     const prompt = cfg.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
     const verifyButton = new ButtonBuilder()
       .setCustomId('verify')
@@ -124,7 +118,7 @@ client.once(Events.ClientReady, async () => {
   }
 });
 
-// CAPTCHA generation helper
+// CAPTCHA 
 function randomText(len = 6) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let s = '';
@@ -205,7 +199,6 @@ async function createCaptchaImage({ text, avatarURL }) {
   }
 }
 
-// Discord event: member joins
 client.on('guildMemberAdd', async (member) => {
   try {
     const guildId = member.guild.id;
@@ -240,13 +233,11 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
-// Interaction handling (buttons + modal)
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     const interactionAge = Date.now() - interaction.createdTimestamp;
     console.log(`Processing interaction: type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}, isRepliable=${interaction.isRepliable()}, token=${interaction.token.slice(0, 10)}..., age=${interactionAge}ms`);
 
-    // Check interaction expiration (15s for buttons)
     if (interaction.isButton() && interactionAge > 15000) {
       console.warn(`Interaction expired: type=${interaction.type}, customId=${interaction.customId}, user=${interaction.user.id}, age=${interactionAge}ms`);
       if (interaction.isRepliable()) {
@@ -438,7 +429,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// Express dashboard + OAuth routes
+// Oauth no one even use this lmao
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -659,5 +650,6 @@ app.listen(PORT, () => {
 });
 
 client.login(BOT_TOKEN);
+
 
 
