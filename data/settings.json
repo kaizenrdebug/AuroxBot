@@ -1,15 +1,12 @@
-{
-  "828932059258945566": {
+in {
+  "guildId": {
     "verify": {
       "enabled": true,
       "channelId": "828932059258945566",
-      "prompt": " Click **Verify** to start. You will receive a captcha to solve. ",
-      "rolesOnJoin": [
-        "1420757337395691590"
-      ],
-      "rolesOnVerify": [
-        "840763928479924235"
-      ]
+      "messageId": "987654321098765432",
+      "prompt": "Click Verify to start.",
+      "rolesOnJoin": ["1420757337395691590"],
+      "rolesOnVerify": ["840763928479924235"]
     }
   }
 }
