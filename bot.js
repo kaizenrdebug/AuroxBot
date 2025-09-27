@@ -1,157 +1,55 @@
-
-require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const express = require('express');
-const session = require('express-session');
-const axios = require('axios');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, AttachmentBuilder, InteractionType, Events } = require('discord.js');
 const { createCanvas, loadImage } = require('canvas');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField } = require('discord.js');
+const axios = require('axios');
 
-const PORT = process.env.DASHBOARD_PORT || 3000;
-const SESSION_SECRET = process.env.SESSION_SECRET || 'change_this_secret';
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const REDIRECT_URI = process.env.REDIRECT_URI || `http://localhost:${PORT}/callback`;
-const BOT_TOKEN = process.env.DISCORD_TOKEN;
-
-if (!CLIENT_ID || !CLIENT_SECRET || !BOT_TOKEN) {
-  console.error('Please set DISCORD_TOKEN, CLIENT_ID, and CLIENT_SECRET in .env');
-  process.exit(1);
-}
-
-// Simple JSON file persistence for settings
-const DATA_DIR = path.resolve(__dirname, 'data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
-
-let settingsStore = {};
-try {
-  settingsStore = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8') || '{}');
-} catch (e) {
-  settingsStore = {};
-}
-
-function saveSettings() {
-  try {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settingsStore, null, 2));
-  } catch (e) {
-    console.error('Failed to save settings:', e);
-  }
-}
-
-// Ephemeral captcha answers (in-memory) map: key = guildId:userId -> {answer, expires}
-const captchaMap = new Map();
-
-// Discord client
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages],
   partials: [Partials.Channel]
 });
 
-// Send or fetch verification message on bot startup
-client.once(Events.ClientReady, async () => {
-  console.log('Bot ready as', client.user.tag);
-  for (const guild of client.guilds.cache.values()) {
-    const guildId = guild.id;
-    const cfg = settingsStore[guildId];
-    if (!cfg || !cfg.verify || !cfg.verify.enabled || !cfg.verify.channelId) continue;
+// Simple in-memory storage (replace with JSON for persistence)
+const settingsStore = {}; // guildId -> {verify: {enabled, channelId, messageId, rolesOnVerify}}
+const captchaMap = new Map(); // "guildId:userId" -> {answer, expires}
 
-    const channel = await guild.channels.fetch(cfg.verify.channelId).catch(() => null);
-    if (!channel || !channel.isTextBased()) {
-      console.warn(`Verify channel ${cfg.verify.channelId} not available for guild ${guildId}`);
-      continue;
-    }
-
-    const botMember = await guild.members.fetch(client.user.id).catch(() => null);
-    if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages])) {
-      console.warn(`Bot lacks ViewChannel or SendMessages permissions in channel ${cfg.verify.channelId} for guild ${guildId}`);
-      continue;
-    }
-
-    const messageId = cfg.verify.messageId;
-    let message = messageId ? await channel.messages.fetch(messageId).catch(() => null) : null;
-    if (!message) {
-      const prompt = cfg.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
-      const verifyButton = new ButtonBuilder()
-        .setCustomId('verify')
-        .setLabel('Verify')
-        .setStyle(ButtonStyle.Primary);
-      const row = new ActionRowBuilder().addComponents(verifyButton);
-      try {
-        message = await channel.send({
-          content: `@here ${prompt}`,
-          components: [row]
-        });
-        settingsStore[guildId].verify = settingsStore[guildId].verify || {};
-        settingsStore[guildId].verify.messageId = message.id;
-        saveSettings();
-        console.log(`Sent verification message with @here for guild ${guildId}, message ID: ${message.id}`);
-      } catch (e) {
-        console.error(`Failed to send verification message in guild ${guildId}:`, e);
-      }
-    }
-  }
-});
-
-// CAPTCHA generation helper
 function randomText(len = 6) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s = '';
-  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return s;
+  return Array.from({length: len}, () => chars[Math.floor(Math.random()*chars.length)]).join('');
 }
 
 async function createCaptchaImage({ text, avatarURL }) {
-  const width = 500;
-  const height = 200;
+  const width = 500, height = 200;
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
+  // background
   ctx.fillStyle = '#0B1B2A';
-  ctx.fillRect(0, 0, width, height);
+  ctx.fillRect(0,0,width,height);
 
-  for (let i = 0; i < 6; i++) {
-    ctx.strokeStyle = `rgba(${Math.floor(Math.random()*120+50)},${Math.floor(Math.random()*120+50)},${Math.floor(Math.random()*120+50)},0.25)`;
-    ctx.beginPath();
-    ctx.moveTo(Math.random()*width, Math.random()*height);
-    ctx.lineTo(Math.random()*width, Math.random()*height);
-    ctx.stroke();
-  }
-
-  try {
-    if (avatarURL) {
-      const avatarBuf = await axios.get(avatarURL, { responseType: 'arraybuffer', timeout: 5000 }).then(r => r.data);
-      const img = await loadImage(avatarBuf);
-      const avSize = 120;
-      const avX = 30;
-      const avY = (height - avSize) / 2;
+  // avatar circle
+  if (avatarURL) {
+    try {
+      const buf = await axios.get(avatarURL, {responseType:'arraybuffer'}).then(r => r.data);
+      const img = await loadImage(buf);
+      const size = 120;
       ctx.save();
       ctx.beginPath();
-      ctx.arc(avX + avSize/2, avY + avSize/2, avSize/2, 0, Math.PI*2);
+      ctx.arc(60+size/2, height/2, size/2, 0, Math.PI*2);
       ctx.closePath();
       ctx.clip();
-      ctx.drawImage(img, avX, avY, avSize, avSize);
+      ctx.drawImage(img, 60, height/2-size/2, size, size);
       ctx.restore();
-      ctx.strokeStyle = '#12323b';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(avX + avSize/2, avY + avSize/2, avSize/2 + 2, 0, Math.PI*2);
-      ctx.stroke();
-    }
-  } catch (e) {
-    console.warn('Avatar load failed:', e?.message || e);
+    } catch {}
   }
 
-  const startX = 200;
-  const baseY = height / 2 + 12;
-  for (let i = 0; i < text.length; i++) {
+  // captcha text
+  const startX = 200, baseY = height/2+12;
+  for (let i=0;i<text.length;i++){
     const ch = text[i];
     const fontSize = 40 + Math.floor(Math.random()*16);
     ctx.font = `${fontSize}px sans-serif`;
-    ctx.fillStyle = ['#dbefff', '#bfe3d8', '#ffd7a8'][i % 3];
-    const x = startX + i * 45 + (Math.random()*8 - 4);
-    const angle = (Math.random()*30 - 15) * Math.PI/180;
+    ctx.fillStyle = ['#dbefff','#bfe3d8','#ffd7a8'][i%3];
+    const x = startX + i*45 + (Math.random()*8-4);
+    const angle = (Math.random()*30-15) * Math.PI/180;
     ctx.save();
     ctx.translate(x, baseY);
     ctx.rotate(angle);
@@ -159,363 +57,108 @@ async function createCaptchaImage({ text, avatarURL }) {
     ctx.restore();
   }
 
-  for (let i = 0; i < 60; i++) {
+  // noise
+  for (let i=0;i<60;i++){
     ctx.fillStyle = `rgba(255,255,255,${Math.random()*0.08})`;
     ctx.beginPath();
-    ctx.arc(Math.random()*width, Math.random()*height, Math.random()*2+0.5, 0, Math.PI*2);
+    ctx.arc(Math.random()*width, Math.random()*height, Math.random()*2+0.5,0,Math.PI*2);
     ctx.fill();
   }
 
-  const buffer = canvas.toBuffer('image/png');
-  return { buffer, text };
+  return { buffer: canvas.toBuffer('image/png'), text };
 }
 
-// Discord event: member joins
-client.on('guildMemberAdd', async (member) => {
-  try {
-    const guildId = member.guild.id;
-    const cfg = settingsStore[guildId];
-    if (!cfg || !cfg.verify || !cfg.verify.enabled) return;
+// Send or fetch the verify message
+async function sendVerifyMessage(guild) {
+  const cfg = settingsStore[guild.id]?.verify;
+  if (!cfg || !cfg.enabled || !cfg.channelId) return;
 
-    const rolesOnJoin = Array.isArray(cfg.verify.rolesOnJoin) ? cfg.verify.rolesOnJoin : [];
-    for (const r of rolesOnJoin) {
-      try {
-        const role = member.guild.roles.cache.get(r) || member.guild.roles.cache.find(x => x.name === r);
-        if (role) await member.roles.add(role).catch(() => null);
-      } catch (e) {
-        console.error(`Failed to add role ${r} to member ${member.id} in guild ${guildId}:`, e);
-      }
-    }
-  } catch (err) {
-    console.error('Error on guildMemberAdd:', err);
+  const channel = await guild.channels.fetch(cfg.channelId).catch(()=>null);
+  if (!channel || !channel.isTextBased()) return;
+
+  let message;
+  if (cfg.messageId) {
+    message = await channel.messages.fetch(cfg.messageId).catch(()=>null);
+  }
+
+  if (!message) {
+    const btn = new ButtonBuilder().setCustomId('verify').setLabel('Verify').setStyle(ButtonStyle.Primary);
+    const row = new ActionRowBuilder().addComponents(btn);
+    message = await channel.send({ content: `@here Click Verify to start.`, components: [row] });
+    settingsStore[guild.id].verify.messageId = message.id;
+  }
+}
+
+// Bot ready
+client.once(Events.ClientReady, async () => {
+  console.log('Bot ready as', client.user.tag);
+  for (const guild of client.guilds.cache.values()) {
+    if (!settingsStore[guild.id]) continue;
+    await sendVerifyMessage(guild);
   }
 });
 
-// Interaction handling (buttons + modal)
-client.on(Events.InteractionCreate, async (interaction) => {
+// Button / Modal interactions
+client.on(Events.InteractionCreate, async interaction => {
   try {
-    // Defer interaction to avoid timeout
-    if (interaction.isButton() || interaction.isModalSubmit()) {
-      await interaction.deferReply({ ephemeral: true });
-    }
-
     if (interaction.isButton() && interaction.customId === 'verify') {
-      const guildId = interaction.guildId;
-      const cfg = settingsStore[guildId];
-      if (!cfg || !cfg.verify || !cfg.verify.enabled) {
-        await interaction.editReply({ content: 'Verification is not enabled for this server.' });
-        return;
-      }
-
+      await interaction.deferReply({ephemeral:true});
       const answer = randomText(6);
-      const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
-      let buffer, text;
-      try {
-        ({ buffer, text } = await createCaptchaImage({ text: answer, avatarURL }));
-      } catch (e) {
-        console.error(`Failed to generate captcha for ${guildId}:${interaction.user.id}:`, e);
-        await interaction.editReply({ content: 'Failed to generate captcha. Please try again.' });
-        return;
-      }
-
-      const key = `${guildId}:${interaction.user.id}`;
-      captchaMap.set(key, { answer, expires: Date.now() + 1000 * 60 * 5 });
-      console.log(`Generated captcha for ${key}: ${answer} (length: ${answer.length}, raw: ${JSON.stringify(answer)})`);
+      const { buffer } = await createCaptchaImage({ text: answer, avatarURL: interaction.user.displayAvatarURL({extension:'png',size:256}) });
+      const key = `${interaction.guildId}:${interaction.user.id}`;
+      captchaMap.set(key, { answer, expires: Date.now()+1000*60*5 });
 
       const attachment = new AttachmentBuilder(buffer, { name: 'captcha.png' });
-      const enter = new ButtonBuilder()
-        .setCustomId(`enter_${interaction.user.id}`)
-        .setLabel('Enter solution')
-        .setStyle(ButtonStyle.Success);
+      const enter = new ButtonBuilder().setCustomId(`enter_${interaction.user.id}`).setLabel('Enter solution').setStyle(ButtonStyle.Success);
       const row = new ActionRowBuilder().addComponents(enter);
 
-      await interaction.editReply({
-        content: 'Solve the captcha shown below and click *Enter solution* to type your answer.',
-        files: [attachment],
-        components: [row]
-      });
-
-      return;
-    }
-
-    if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('modal_')) {
-      const userId = interaction.customId.split('_')[1];
-      if (userId !== interaction.user.id) {
-        await interaction.editReply({ content: 'This modal is not for you.' });
-        return;
-      }
-      const rawAnswer = interaction.fields.getTextInputValue('captcha_answer');
-      const answer = rawAnswer.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-      const key = `${interaction.guildId}:${interaction.user.id}`;
-      const stored = captchaMap.get(key);
-      if (!stored) {
-        await interaction.editReply({ content: 'No captcha found or it expired. Please click Verify again.' });
-        return;
-      }
-      if (Date.now() > stored.expires) {
-        captchaMap.delete(key);
-        await interaction.editReply({ content: 'Captcha expired. Please click Verify again.' });
-        return;
-      }
-
-      console.log(`Comparing: raw='${rawAnswer}', sanitized='${answer}' (length: ${answer.length}), stored='${stored.answer}' (length: ${stored.answer.length}, raw: ${JSON.stringify(stored.answer)})`);
-      if (answer === stored.answer.toUpperCase()) {
-        const cfg = settingsStore[interaction.guildId];
-        const rolesOnJoin = (cfg?.verify?.rolesOnJoin) || [];
-        const rolesOnVerify = (cfg?.verify?.rolesOnVerify) || [];
-
-        const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-        if (!member) {
-          await interaction.editReply({ content: 'Member not found in guild.' });
-          return;
-        }
-
-        for (const r of rolesOnJoin) {
-          try {
-            const role = interaction.guild.roles.cache.get(r) || interaction.guild.roles.cache.find(x => x.name === r);
-            if (role && !rolesOnVerify.includes(role.id) && !rolesOnVerify.includes(role.name)) {
-              await member.roles.remove(role).catch(() => null);
-            }
-          } catch (e) {
-            console.error(`Failed to remove role ${r} from member ${interaction.user.id}:`, e);
-          }
-        }
-
-        for (const r of rolesOnVerify) {
-          try {
-            const role = interaction.guild.roles.cache.get(r) || interaction.guild.roles.cache.find(x => x.name === r);
-            if (role) await member.roles.add(role).catch(() => null);
-          } catch (e) {
-            console.error(`Failed to add role ${r} to member ${interaction.user.id}:`, e);
-          }
-        }
-
-        captchaMap.delete(key);
-        await interaction.editReply({ content: '✅ Verified! Roles have been updated.' });
-      } else {
-        captchaMap.delete(key);
-        await interaction.editReply({ content: '❌ Wrong answer. Click **Verify** again to get a new captcha.' });
-      }
-      return;
+      await interaction.editReply({ content: 'Solve the captcha and click Enter solution.', files:[attachment], components:[row] });
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('enter_')) {
       if (interaction.customId.split('_')[1] !== interaction.user.id) {
-        await interaction.editReply({ content: 'This enter button is not for you.' });
+        await interaction.reply({ content: 'Not for you.', ephemeral:true });
         return;
       }
-      await interaction.showModal(
-        new ModalBuilder()
-          .setCustomId(`modal_${interaction.user.id}`)
-          .setTitle('Enter captcha')
-          .addComponents(
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder().setCustomId('captcha_answer').setLabel('Captcha text').setStyle(TextInputStyle.Short).setRequired(true)
-            )
-          )
+      await interaction.showModal(new ModalBuilder()
+        .setCustomId(`modal_${interaction.user.id}`)
+        .setTitle('Enter captcha')
+        .addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId('captcha_answer').setLabel('Captcha text').setStyle(TextInputStyle.Short).setRequired(true)
+        ))
       );
     }
-  } catch (err) {
-    console.error('Interaction handler error:', err);
-    if (interaction && !interaction.replied && !interaction.deferred) {
-      try { await interaction.reply({ content: 'An error occurred. Please try again.', ephemeral: true }); } catch (e) {}
-    } else if (interaction && interaction.deferred) {
-      try { await interaction.editReply({ content: 'An error occurred. Please try again.' }); } catch (e) {}
-    }
-  }
-});
 
-// Express dashboard + OAuth routes
-const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(session({
-  secret: SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: { maxAge: 1000 * 60 * 60 * 24 }
-}));
+    if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('modal_')) {
+      const userId = interaction.customId.split('_')[1];
+      if (userId !== interaction.user.id) return interaction.reply({ content:'Not for you.', ephemeral:true });
 
-app.use(express.static('.'));
+      const raw = interaction.fields.getTextInputValue('captcha_answer');
+      const key = `${interaction.guildId}:${interaction.user.id}`;
+      const stored = captchaMap.get(key);
+      if (!stored || Date.now()>stored.expires) return interaction.reply({ content:'Captcha expired, click Verify again.', ephemeral:true });
 
-function isAuthenticated(req, res, next) {
-  if (req.session && req.session.user) return next();
-  return res.status(401).json({ error: 'Not authenticated' });
-}
-
-app.get('/login', (req, res) => {
-  const url = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify%20guilds`;
-  res.redirect(url);
-});
-
-app.get('/logout', (req, res) => {
-  req.session.destroy(() => { res.redirect('/'); });
-});
-
-app.get('/callback', async (req, res) => {
-  const code = req.query.code;
-  if (!code) return res.status(400).send('No code provided.');
-  try {
-    const params = new URLSearchParams();
-    params.append('client_id', CLIENT_ID);
-    params.append('client_secret', CLIENT_SECRET);
-    params.append('grant_type', 'authorization_code');
-    params.append('code', code);
-    params.append('redirect_uri', REDIRECT_URI);
-    const tokenRes = await axios.post('https://discord.com/api/oauth2/token', params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-    const accessToken = tokenRes.data.access_token;
-    const me = await axios.get('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${accessToken}` } }).then(r => r.data);
-    const guilds = await axios.get('https://discord.com/api/users/@me/guilds', { headers: { Authorization: `Bearer ${accessToken}` } }).then(r => r.data);
-    req.session.user = me;
-    req.session.guilds = guilds;
-    res.redirect('/');
-  } catch (err) {
-    console.error('OAuth callback error', err?.response?.data || err);
-    res.status(500).send('OAuth failed');
-  }
-});
-
-app.get('/api/me', (req, res) => {
-  if (!req.session.user) return res.status(401).json({ error: 'Not authenticated' });
-  return res.json({ user: req.session.user, guilds: req.session.guilds || [] });
-});
-
-app.get('/api/server/:id', isAuthenticated, async (req, res) => {
-  const id = req.params.id;
-  try {
-    const guild = await client.guilds.fetch(id).catch(() => null);
-    if (!guild) return res.status(404).json({ error: 'Guild not found or bot not in guild' });
-
-    const members = await guild.members.fetch().catch(() => null);
-    const humans = members ? members.filter(m => !m.user.bot).size : 0;
-    const bots = members ? members.filter(m => m.user.bot).size : 0;
-    const roles = guild.roles.cache.map(r => ({ id: r.id, name: r.name, color: r.hexColor }));
-    const channels = guild.channels.cache
-      .filter(c => c.isTextBased())
-      .map(c => ({ id: c.id, name: c.name, type: c.type }));
-
-    const payload = {
-      id: guild.id,
-      name: guild.name,
-      memberCount: guild.memberCount || (members ? members.size : 0),
-      humans,
-      bots,
-      roles,
-      channels,
-      settings: settingsStore[guild.id] || {}
-    };
-    return res.json(payload);
-  } catch (err) {
-    console.error('Fetch guild info error:', err);
-    return res.status(500).json({ error: 'Failed to fetch guild info' });
-  }
-});
-
-app.post('/api/settings', isAuthenticated, async (req, res) => {
-  try {
-    const body = req.body;
-    if (!body || !body.guildId) return res.status(400).json({ error: 'guildId required' });
-
-    const guildId = body.guildId;
-    const guild = await client.guilds.fetch(guildId).catch(() => null);
-    if (!guild) return res.status(404).json({ error: 'Guild not found or bot not present' });
-
-    const member = await guild.members.fetch(req.session.user.id).catch(() => null);
-    if (!member) return res.status(403).json({ error: 'You must be a guild member' });
-    if (!member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
-      return res.status(403).json({ error: 'Manage Guild permission required' });
-    }
-
-    settingsStore[guildId] = settingsStore[guildId] || {};
-    const oldChannelId = settingsStore[guildId].verify?.channelId;
-    settingsStore[guildId].verify = body.verify || settingsStore[guildId].verify || { enabled: false };
-
-    if (settingsStore[guildId].verify.enabled && (body.verify.channelId !== oldChannelId || !settingsStore[guildId].verify.messageId)) {
-      const channel = await guild.channels.fetch(body.verify.channelId).catch(() => null);
-      if (channel && channel.isTextBased()) {
-        const botMember = await guild.members.fetch(client.user.id).catch(() => null);
-        if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages])) {
-          return res.status(403).json({ error: `Bot lacks ViewChannel or SendMessages permissions in channel ${body.verify.channelId}` });
+      if (raw.replace(/[^A-Za-z0-9]/g,'').toUpperCase() === stored.answer.toUpperCase()) {
+        captchaMap.delete(key);
+        const cfg = settingsStore[interaction.guildId]?.verify;
+        if (cfg?.rolesOnVerify) {
+          const member = await interaction.guild.members.fetch(interaction.user.id);
+          for (const r of cfg.rolesOnVerify) {
+            const role = interaction.guild.roles.cache.get(r);
+            if (role) await member.roles.add(role).catch(()=>null);
+          }
         }
-        if (settingsStore[guildId].verify.messageId && oldChannelId) {
-          const oldChannel = await guild.channels.fetch(oldChannelId).catch(() => null);
-          if (oldChannel) await oldChannel.messages.delete(settingsStore[guildId].verify.messageId).catch(() => null);
-        }
-        const prompt = body.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
-        const verifyButton = new ButtonBuilder()
-          .setCustomId('verify')
-          .setLabel('Verify')
-          .setStyle(ButtonStyle.Primary);
-        const row = new ActionRowBuilder().addComponents(verifyButton);
-        try {
-          const message = await channel.send({
-            content: `@here ${prompt}`,
-            components: [row]
-          });
-          settingsStore[guildId].verify.messageId = message.id;
-        } catch (e) {
-          console.error(`Failed to send verification message in guild ${guildId}:`, e);
-          return res.status(500).json({ error: 'Failed to send verification message' });
-        }
-      }
-    } else if (!settingsStore[guildId].verify.enabled && settingsStore[guildId].verify.messageId) {
-      const channel = await guild.channels.fetch(oldChannelId).catch(() => null);
-      if (channel) await channel.messages.delete(settingsStore[guildId].verify.messageId).catch(() => null);
-      delete settingsStore[guildId].verify.messageId;
-    }
-
-    saveSettings();
-    return res.json({ success: true });
-  } catch (err) {
-    console.error('Save settings error', err);
-    return res.status(500).json({ error: 'Failed to save settings' });
-  }
-});
-
-app.post('/api/test-verify/:id', isAuthenticated, async (req, res) => {
-  const guildId = req.params.id;
-  try {
-    const guild = await client.guilds.fetch(guildId).catch(() => null);
-    if (!guild) return res.status(404).json({ error: 'Guild not found' });
-    const member = await guild.members.fetch(req.session.user.id).catch(() => null);
-    if (!member) return res.status(403).json({ error: 'You must be a member' });
-    if (!member.permissions.has(PermissionsBitField.Flags.ManageGuild)) return res.status(403).json({ error: 'Manage Guild required' });
-
-    const cfg = settingsStore[guildId];
-    if (!cfg || !cfg.verify || !cfg.verify.channelId) return res.status(400).json({ error: 'Verify channel not configured' });
-
-    const channel = await guild.channels.fetch(cfg.verify.channelId).catch(() => null);
-    if (!channel || !channel.isTextBased()) return res.status(404).json({ error: 'Verify channel not found' });
-
-    const botMember = await guild.members.fetch(client.user.id).catch(() => null);
-    if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages])) {
-      return res.status(403).json({ error: `Bot lacks ViewChannel or SendMessages permissions in channel ${cfg.verify.channelId}` });
-    }
-
-    let message = cfg.verify.messageId ? await channel.messages.fetch(cfg.verify.messageId).catch(() => null) : null;
-    if (!message) {
-      const prompt = cfg.verify.prompt || 'Click Verify to start.';
-      const btn = new ButtonBuilder().setCustomId('verify').setLabel('Verify').setStyle(ButtonStyle.Primary);
-      const row = new ActionRowBuilder().addComponents(btn);
-      try {
-        message = await channel.send({ content: `@here ${prompt}`, components: [row] });
-        settingsStore[guildId].verify = settingsStore[guildId].verify || {};
-        settingsStore[guildId].verify.messageId = message.id;
-        saveSettings();
-      } catch (e) {
-        console.error(`Failed to send test verification message in guild ${guildId}:`, e);
-        return res.status(500).json({ error: 'Failed to send test message' });
+        await interaction.reply({ content:'✅ Verified!', ephemeral:true });
+      } else {
+        captchaMap.delete(key);
+        await interaction.reply({ content:'❌ Wrong captcha, click Verify again.', ephemeral:true });
       }
     }
-    return res.json({ success: true });
-  } catch (err) {
-    console.error('Test verify error', err);
-    return res.status(500).json({ error: 'Failed to send test message' });
+
+  } catch (e) {
+    console.error('Interaction error:', e);
+    if (!interaction.replied) await interaction.reply({ content:'Error occurred.', ephemeral:true });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Dashboard available at http://localhost:${PORT}`);
-});
-
-client.login(BOT_TOKEN);
+client.login(process.env.DISCORD_TOKEN);
