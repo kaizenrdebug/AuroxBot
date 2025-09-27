@@ -232,15 +232,16 @@ client.on('guildMemberAdd', async (member) => {
 // Interaction handling (buttons + modal)
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    console.log(`Processing interaction: type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}, isRepliable=${interaction.isRepliable()}, token=${interaction.token.slice(0, 10)}...`);
+    const interactionAge = Date.now() - interaction.createdTimestamp;
+    console.log(`Processing interaction: type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}, isRepliable=${interaction.isRepliable()}, token=${interaction.token.slice(0, 10)}..., age=${interactionAge}ms`);
 
-    // Defer interaction to avoid timeout
-    if (interaction.isButton() || interaction.isModalSubmit()) {
-      if (!interaction.isRepliable()) {
-        console.warn(`Interaction not repliable: type=${interaction.type}, customId=${interaction.customId}, user=${interaction.user.id}`);
-        return;
+    // Check interaction expiration (15s for buttons)
+    if (interaction.isButton() && interactionAge > 15000) {
+      console.warn(`Interaction expired: type=${interaction.type}, customId=${interaction.customId}, user=${interaction.user.id}, age=${interactionAge}ms`);
+      if (interaction.isRepliable()) {
+        await interaction.reply({ content: 'This interaction has expired. Please click Verify again.', ephemeral: true });
       }
-      await interaction.deferReply({ ephemeral: true });
+      return;
     }
 
     if (interaction.isButton() && interaction.customId === 'verify') {
@@ -248,21 +249,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const cfg = settingsStore[guildId];
       if (!cfg || !cfg.verify || !cfg.verify.enabled || !cfg.verify.channelId) {
         console.warn(`Verification not configured or disabled for guild ${guildId}`);
-        await interaction.editReply({ content: 'Verification is not enabled for this server. Contact an admin.' });
+        await interaction.reply({ content: 'Verification is not enabled for this server. Contact an admin.', ephemeral: true });
         return;
       }
 
       const channel = await interaction.guild.channels.fetch(cfg.verify.channelId).catch(() => null);
       if (!channel || !channel.isTextBased()) {
         console.warn(`Verify channel ${cfg.verify.channelId} invalid for guild ${guildId}`);
-        await interaction.editReply({ content: 'Verification channel is invalid. Contact an admin.' });
+        await interaction.reply({ content: 'Verification channel is invalid. Contact an admin.', ephemeral: true });
         return;
       }
 
       const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
       if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.EmbedLinks])) {
         console.warn(`Bot lacks ViewChannel, SendMessages, or EmbedLinks permissions in channel ${cfg.verify.channelId} for guild ${guildId}`);
-        await interaction.editReply({ content: 'Bot lacks permissions to send messages in the verification channel.' });
+        await interaction.reply({ content: 'Bot lacks permissions to send messages in the verification channel.', ephemeral: true });
         return;
       }
 
@@ -273,7 +274,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         ({ buffer, text } = await createCaptchaImage({ text: answer, avatarURL }));
       } catch (e) {
         console.error(`Failed to generate captcha for ${guildId}:${interaction.user.id}:`, e);
-        await interaction.editReply({ content: 'Failed to generate captcha. Please try again.' });
+        await interaction.reply({ content: 'Failed to generate captcha. Please try again.', ephemeral: true });
         return;
       }
 
@@ -288,10 +289,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setStyle(ButtonStyle.Success);
       const row = new ActionRowBuilder().addComponents(enter);
 
-      await interaction.editReply({
+      await interaction.reply({
         content: 'Solve the captcha shown below and click *Enter solution* to type your answer.',
         files: [attachment],
-        components: [row]
+        components: [row],
+        ephemeral: true
       });
       console.log(`Sent captcha response to user ${interaction.user.id} in guild ${guildId}`);
       return;
@@ -300,7 +302,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('modal_')) {
       const userId = interaction.customId.split('_')[1];
       if (userId !== interaction.user.id) {
-        await interaction.editReply({ content: 'This modal is not for you.' });
+        await interaction.reply({ content: 'This modal is not for you.', ephemeral: true });
         return;
       }
       const rawAnswer = interaction.fields.getTextInputValue('captcha_answer');
@@ -310,13 +312,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const stored = captchaMap.get(key);
       if (!stored) {
         console.warn(`No captcha found for ${key}`);
-        await interaction.editReply({ content: 'No captcha found or it expired. Please click Verify again.' });
+        await interaction.reply({ content: 'No captcha found or it expired. Please click Verify again.', ephemeral: true });
         return;
       }
       if (Date.now() > stored.expires) {
         console.warn(`Captcha expired for ${key}`);
         captchaMap.delete(key);
-        await interaction.editReply({ content: 'Captcha expired. Please click Verify again.' });
+        await interaction.reply({ content: 'Captcha expired. Please click Verify again.', ephemeral: true });
         return;
       }
 
@@ -329,14 +331,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
         if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
           console.error(`Bot lacks ManageRoles permission in guild ${interaction.guildId}`);
-          await interaction.editReply({ content: 'Bot lacks permission to manage roles. Contact an admin.' });
+          await interaction.reply({ content: 'Bot lacks permission to manage roles. Contact an admin.', ephemeral: true });
           return;
         }
 
         const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
         if (!member) {
           console.error(`Member ${interaction.user.id} not found in guild ${interaction.guildId}`);
-          await interaction.editReply({ content: 'Member not found in guild.' });
+          await interaction.reply({ content: 'Member not found in guild.', ephemeral: true });
           return;
         }
 
@@ -367,11 +369,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         captchaMap.delete(key);
-        await interaction.editReply({ content: '✅ Verified! Roles have been updated.' });
+        await interaction.reply({ content: '✅ Verified! Roles have been updated.', ephemeral: true });
         console.log(`User ${interaction.user.id} verified in guild ${interaction.guildId}`);
       } else {
         captchaMap.delete(key);
-        await interaction.editReply({ content: '❌ Wrong answer. Click **Verify** again to get a new captcha.' });
+        await interaction.reply({ content: '❌ Wrong answer. Click **Verify** again to get a new captcha.', ephemeral: true });
         console.log(`User ${interaction.user.id} failed captcha in guild ${interaction.guildId}: expected ${stored.answer}, got ${answer}`);
       }
       return;
@@ -380,11 +382,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('enter_')) {
       const userId = interaction.customId.split('_')[1];
       if (userId !== interaction.user.id) {
-        await interaction.editReply({ content: 'This enter button is not for you.' });
+        await interaction.reply({ content: 'This enter button is not for you.', ephemeral: true });
         return;
       }
       if (!interaction.isRepliable()) {
-        console.warn(`Cannot show modal: Interaction not repliable for user ${interaction.user.id}, customId=${interaction.customId}, token=${interaction.token.slice(0, 10)}...`);
+        console.warn(`Cannot show modal: Interaction not repliable for user ${interaction.user.id}, customId=${interaction.customId}, token=${interaction.token.slice(0, 10)}..., age=${interactionAge}ms`);
         await interaction.followUp({ content: 'Unable to show captcha modal. Please try again.', ephemeral: true });
         return;
       }
@@ -410,19 +412,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
           console.error(`Attempt ${3 - attempts}/2: Failed to show modal for user ${interaction.user.id} in guild ${interaction.guildId}: ${e.message} (code: ${e.code || 'unknown'})`);
           attempts--;
           if (attempts === 0) {
-            await interaction.editReply({ content: 'Failed to show captcha modal after retries. Please try again.' });
+            await interaction.reply({ content: 'Failed to show captcha modal after retries. Please try again.', ephemeral: true });
             return;
           }
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
     }
   } catch (err) {
-    console.error(`Interaction handler error for type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}, token=${interaction.token?.slice(0, 10) || 'none'}...: ${err.message} (code: ${err.code || 'unknown'})`);
+    console.error(`Interaction handler error for type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}, token=${interaction.token?.slice(0, 10) || 'none'}..., age=${interactionAge}ms: ${err.message} (code: ${err.code || 'unknown'})`);
     if (interaction && !interaction.replied && !interaction.deferred) {
       try { await interaction.reply({ content: 'An error occurred. Please try again.', ephemeral: true }); } catch (e) {}
-    } else if (interaction && interaction.deferred) {
-      try { await interaction.editReply({ content: 'An error occurred. Please try again.' }); } catch (e) {}
     }
   }
 });
