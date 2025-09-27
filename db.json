@@ -1,0 +1,21 @@
+{
+  "guilds": {
+    "828932059258945566": {
+      "welcomer": {
+        "enabled": true,
+        "mode": "dm",
+        "channelId": null,
+        "message": "Welcome {user} to {server}!"
+      },
+      "leaver": {
+        "enabled": true,
+        "channelId": null,
+        "message": "{user} has left {server}."
+      },
+      "autoRole": {
+        "enabled": false,
+        "roleId": null
+      }
+    }
+  }
+}

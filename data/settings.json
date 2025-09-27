@@ -1,0 +1,15 @@
+{
+  "828932059258945566": {
+    "verify": {
+      "enabled": true,
+      "channelId": "1416378250518597735",
+      "prompt": "Click **Verify** to start. You will receive a captcha to solve.",
+      "rolesOnJoin": [
+        "1420757337395691590"
+      ],
+      "rolesOnVerify": [
+        "840763928479924235"
+      ]
+    }
+  }
+}

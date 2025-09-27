@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discord Bot Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .guild { margin-bottom: 20px; border: 1px solid #ccc; padding: 10px; }
+    .hidden { display: none; }
+    button { margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Discord Bot Dashboard</h1>
+  <div id="login-status"></div>
+  <div id="guild-list"></div>
+
+  <script>
+    async function fetchAPI(endpoint) {
+      const res = await fetch(endpoint);
+      if (res.status === 401) window.location.href = '/login';
+      return res.json();
+    }
+
+    async function loadDashboard() {
+      const me = await fetchAPI('/api/me').catch(() => null);
+      if (!me || !me.user) {
+        document.getElementById('login-status').innerHTML = '<a href="/login">Login with Discord</a>';
+        return;
+      }
+      document.getElementById('login-status').innerHTML = `Logged in as ${me.user.username} <a href="/logout">(Logout)</a>`;
+
+      const guildList = document.getElementById('guild-list');
+      guildList.innerHTML = '';
+      for (const g of me.guilds) {
+        const div = document.createElement('div');
+        div.className = 'guild';
+        div.innerHTML = `<h2>${g.name}</h2><button onclick="loadGuild('${g.id}')">Configure Verification</button><div id="config-${g.id}" class="hidden"></div>`;
+        guildList.appendChild(div);
+      }
+    }
+
+    async function loadGuild(guildId) {
+      const server = await fetchAPI(`/api/server/${guildId}`);
+      const configDiv = document.getElementById(`config-${guildId}`);
+      configDiv.classList.remove('hidden');
+      configDiv.innerHTML = '';
+
+      // Enabled checkbox
+      const enabled = document.createElement('label');
+      enabled.innerHTML = '<input type="checkbox" id="enabled"> Enabled';
+      enabled.querySelector('input').checked = server.settings?.verify?.enabled || false;
+      configDiv.appendChild(enabled);
+
+      // Channel select
+      const channelSelect = document.createElement('select');
+      channelSelect.id = 'channelId';
+      channelSelect.innerHTML = '<option value="">Select Channel</option>';
+      for (const ch of server.channels) {
+        const opt = document.createElement('option');
+        opt.value = ch.id;
+        opt.text = ch.name;
+        if (ch.id === server.settings?.verify?.channelId) opt.selected = true;
+        channelSelect.appendChild(opt);
+      }
+      const channelLabel = document.createElement('div');
+      channelLabel.innerHTML = '<label for="channelId">Verify Channel:</label>';
+      channelLabel.appendChild(channelSelect);
+      configDiv.appendChild(channelLabel);
+
+      // Roles On Join multi-select
+      const rolesOnJoinSelect = document.createElement('select');
+      rolesOnJoinSelect.id = 'rolesOnJoin';
+      rolesOnJoinSelect.multiple = true;
+      for (const r of server.roles) {
+        const opt = document.createElement('option');
+        opt.value = r.id;
+        opt.text = r.name;
+        if (server.settings?.verify?.rolesOnJoin?.includes(r.id)) opt.selected = true;
+        rolesOnJoinSelect.appendChild(opt);
+      }
+      const rolesOnJoinLabel = document.createElement('div');
+      rolesOnJoinLabel.innerHTML = '<label for="rolesOnJoin">Roles On Join (multi-select):</label><br><small>These roles will be given to users as soon as they join. Use this to identify users who have not yet verified. Any roles in this list will be removed when verifying, unless it is also in the Roles On Verify list.</small>';
+      rolesOnJoinLabel.appendChild(rolesOnJoinSelect);
+      configDiv.appendChild(rolesOnJoinLabel);
+
+      // Roles On Verify multi-select
+      const rolesOnVerifySelect = document.createElement('select');
+      rolesOnVerifySelect.id = 'rolesOnVerify';
+      rolesOnVerifySelect.multiple = true;
+      for (const r of server.roles) {
+        const opt = document.createElement('option');
+        opt.value = r.id;
+        opt.text = r.name;
+        if (server.settings?.verify?.rolesOnVerify?.includes(r.id)) opt.selected = true;
+        rolesOnVerifySelect.appendChild(opt);
+      }
+      const rolesOnVerifyLabel = document.createElement('div');
+      rolesOnVerifyLabel.innerHTML = '<label for="rolesOnVerify">Roles On Verify (multi-select):</label><br><small>These roles will be given to users once they verify. Use this to give users permissions to send messages in channels. Any roles in Roles On Join will be removed, unless it is also in this list.</small>';
+      rolesOnVerifyLabel.appendChild(rolesOnVerifySelect);
+      configDiv.appendChild(rolesOnVerifyLabel);
+
+      // Prompt input
+      const promptInput = document.createElement('input');
+      promptInput.id = 'prompt';
+      promptInput.type = 'text';
+      promptInput.value = server.settings?.verify?.prompt || '';
+      const promptLabel = document.createElement('div');
+      promptLabel.innerHTML = '<label for="prompt">Custom Prompt:</label>';
+      promptLabel.appendChild(promptInput);
+      configDiv.appendChild(promptLabel);
+
+      // Save button
+      const saveBtn = document.createElement('button');
+      saveBtn.textContent = 'Save Settings';
+      saveBtn.onclick = () => saveSettings(guildId);
+      configDiv.appendChild(saveBtn);
+
+      // Test verify button
+      const testBtn = document.createElement('button');
+      testBtn.textContent = 'Send Test Verify Message';
+      testBtn.onclick = () => sendTestVerify(guildId);
+      configDiv.appendChild(testBtn);
+    }
+
+    async function saveSettings(guildId) {
+      const verify = {
+        enabled: document.getElementById('enabled').checked,
+        channelId: document.getElementById('channelId').value,
+        rolesOnJoin: Array.from(document.getElementById('rolesOnJoin').selectedOptions).map(opt => opt.value),
+        rolesOnVerify: Array.from(document.getElementById('rolesOnVerify').selectedOptions).map(opt => opt.value),
+        prompt: document.getElementById('prompt').value
+      };
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ guildId, verify })
+      });
+      alert('Settings saved!');
+    }
+
+    async function sendTestVerify(guildId) {
+      await fetch(`/api/test-verify/${guildId}`, { method: 'POST' });
+      alert('Test message sent!');
+    }
+
+    loadDashboard();
+  </script>
+</body>
+</html>

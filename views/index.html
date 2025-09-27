@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aurox Assets Bot Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen font-sans">
+    <div class="container mx-auto p-6">
+        <!-- Header -->
+        <header class="flex items-center justify-between mb-8">
+            <div class="flex items-center space-x-4">
+                <img id="server-icon" src="{{Guild.Icon}}" alt="Server Icon" class="w-16 h-16 rounded-full">
+                <div>
+                    <h1 class="text-2xl font-bold">Aurox Assets 👑 Bot Dashboard</h1>
+                    <p id="server-name" class="text-gray-400">{{Guild.Name}} ({{Guild.ID}})</p>
+                </div>
+            </div>
+            <button id="connect-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">Connect Bot</button>
+        </header>
+
+        <!-- Connection Prompt -->
+        <div id="connection-prompt" class="bg-gray-800 rounded-lg p-6 mb-8">
+            <h2 class="text-xl font-semibold mb-4">Welcome to Your Bot Dashboard!</h2>
+            <p>Please enter your Discord Server ID to configure its settings or connect via Discord to authenticate.</p>
+            <div class="mt-4 flex space-x-4">
+                <input id="server-id-input" type="text" placeholder="Enter Server ID" class="bg-gray-700 text-white rounded p-2 w-full">
+                <button id="load-server-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">Load Server</button>
+            </div>
+            <p class="text-gray-400 text-sm mt-2">In a real bot, you'd get here from a <code>/config</code> link and this would be automatic.</p>
+        </div>
+
+        <!-- Main Content (Hidden until connected) -->
+        <div id="main-content" class="hidden">
+            <!-- Navigation -->
+            <nav class="flex space-x-4 mb-8">
+                <a href="#" class="px-4 py-2 bg-gray-700 rounded font-semibold">Dashboard</a>
+                <a href="#" class="px-4 py-2 hover:bg-gray-700 rounded">Commands</a>
+                <a href="#" class="px-4 py-2 hover:bg-gray-700 rounded">Moderation</a>
+            </nav>
+
+            <!-- Server Selection and Save -->
+            <div class="flex justify-between items-center mb-8">
+                <div class="flex items-center space-x-4">
+                    <span class="text-lg font-semibold">S</span>
+                    <select id="server-select" class="bg-gray-700 rounded p-2">
+                        <option>Select a Server</option>
+                    </select>
+                    <span>Manage your bot's settings below.</span>
+                </div>
+                <button id="save-settings-btn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">Save Settings</button>
+            </div>
+
+            <!-- Server Stats -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+                <div class="bg-gray-800 rounded-lg p-4">
+                    <h3 class="font-semibold">Total Members</h3>
+                    <p id="total-members">{{Guild.Members}} ({{Ordinal(Guild.Members)}})</p>
+                </div>
+                <div class="bg-gray-800 rounded-lg p-4">
+                    <h3 class="font-semibold">Humans</h3>
+                    <p id="humans">--</p>
+                </div>
+                <div class="bg-gray-800 rounded-lg p-4">
+                    <h3 class="font-semibold">Bots</h3>
+                    <p id="bots">--</p>
+                </div>
+                <div class="bg-gray-800 rounded-lg p-4">
+                    <h3 class="font-semibold">Text Channels</h3>
+                    <p id="text-channels">--</p>
+                </div>
+            </div>
+
+            <!-- Welcomer System -->
+            <section class="bg-gray-800 rounded-lg p-6 mb-8">
+                <h2 class="text-xl font-semibold mb-4">👋 Welcomer System</h2>
+                <label class="flex items-center space-x-2">
+                    <input id="welcomer-toggle" type="checkbox" class="form-checkbox h-5 w-5 text-blue-600">
+                    <span>Automatically welcome new members when they join.</span>
+                </label>
+                <div class="mt-4 space-y-4">
+                    <div>
+                        <label class="block font-semibold">Welcome Mode</label>
+                        <select id="welcome-mode" class="mt-1 w-full bg-gray-700 rounded p-2">
+                            <option>Send to a specific channel</option>
+                            <option>Send a Direct Message (DM)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-semibold">Welcome Channel</label>
+                        <select id="welcome-channel" class="mt-1 w-full bg-gray-700 rounded p-2">
+                            <option>Select a channel</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-semibold">Welcome Message</label>
+                        <textarea id="welcome-message" class="mt-1 w-full bg-gray-700 rounded p-2" rows="4">
+Welcome to {{Guild.Name}}, {{User.Mention}}!
+This server is protected by 🛡️ Borderwall.
+Please verify first to access the server.
+                        </textarea>
+                        <p class="text-gray-400 text-sm mt-1">
+                            Use {{User.Mention}} for the user's mention and {{Guild.Name}} for the server name.
+                            <a href="#" class="text-blue-400">Click here</a> to view all formatting tags.
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Auto Role System -->
+            <section class="bg-gray-800 rounded-lg p-6">
+                <h2 class="text-xl font-semibold mb-4">🛡️ Auto Role</h2>
+                <label class="flex items-center space-x-2">
+                    <input id="autorole-toggle" type="checkbox" class="form-checkbox h-5 w-5 text-blue-600">
+                    <span>Automatically assign a role to new members.</span>
+                </label>
+                <div class="mt-4">
+                    <label class="block font-semibold">Role to Assign</label>
+                    <select id="autorole-select" class="mt-1 w-full bg-gray-700 rounded p-2">
+                        <option>Select a role</option>
+                        <option>Visitor</option>
+                        <option>👤┃Member</option>
+                    </select>
+                </div>
+            </section>
+        </div>
+
+        <!-- Save Notification -->
+        <div id="save-notification" class="hidden fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded">
+            Settings saved successfully!
+        </div>
+    </div>
+
+    <script>
+        // Mock Discord OAuth2 redirect (replace with actual OAuth2 flow)
+        document.getElementById('connect-btn').addEventListener('click', () => {
+            // Redirect to Discord OAuth2 authorization URL
+            window.location.href = 'https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&redirect_uri=YOUR_REDIRECT_URI&response_type=code&scope=identify%20guilds';
+        });
+
+        // Mock server data fetching (replace with actual API calls)
+        document.getElementById('load-server-btn').addEventListener('click', async () => {
+            const serverId = document.getElementById('server-id-input').value;
+            if (!serverId) {
+                alert('Please enter a valid Server ID');
+                return;
+            }
+
+            try {
+                // Mock API call to fetch server data
+                const response = await axios.get(`/api/server/${serverId}`, {
+                    headers: { Authorization: 'Bearer YOUR_TOKEN' } // Replace with actual token from OAuth2
+                });
+                const serverData = response.data;
+
+                // Update UI with server data
+                document.getElementById('server-icon').src = serverData.icon || '{{Guild.Icon}}';
+                document.getElementById('server-name').textContent = `${serverData.name || '{{Guild.Name}}'} (${serverData.id || '{{Guild.ID}}'})`;
+                document.getElementById('total-members').textContent = `${serverData.memberCount || '{{Guild.Members}}'} (${addOrdinal(serverData.memberCount) || '{{Ordinal(Guild.Members)}}'})`;
+                document.getElementById('humans').textContent = serverData.humans || '--';
+                document.getElementById('bots').textContent = serverData.bots || '--';
+                document.getElementById('text-channels').textContent = serverData.textChannels || '--';
+
+                // Populate server select
+                const serverSelect = document.getElementById('server-select');
+                serverSelect.innerHTML = `<option>${serverData.name || 'Select a Server'}</option>`;
+
+                // Populate channel select (mock channels)
+                const welcomeChannel = document.getElementById('welcome-channel');
+                welcomeChannel.innerHTML = `<option>${serverData.welcomeChannel || 'Select a channel'}</option><option>✅┃verification</option>`;
+
+                // Show main content
+                document.getElementById('connection-prompt').classList.add('hidden');
+                document.getElementById('main-content').classList.remove('hidden');
+            } catch (error) {
+                alert('Failed to load server. Please check the Server ID and ensure the bot is added.');
+            }
+        });
+
+        // Save settings
+        document.getElementById('save-settings-btn').addEventListener('click', async () => {
+            const settings = {
+                welcomer: {
+                    enabled: document.getElementById('welcomer-toggle').checked,
+                    mode: document.getElementById('welcome-mode').value,
+                    channel: document.getElementById('welcome-channel').value,
+                    message: document.getElementById('welcome-message').value
+                },
+                autorole: {
+                    enabled: document.getElementById('autorole-toggle').checked,
+                    role: document.getElementById('autorole-select').value
+                }
+            };
+
+            try {
+                // Mock API call to save settings
+                await axios.post('/api/settings', settings, {
+                    headers: { Authorization: 'Bearer YOUR_TOKEN' }
+                });
+                const notification = document.getElementById('save-notification');
+                notification.classList.remove('hidden');
+                setTimeout(() => notification.classList.add('hidden'), 3000);
+            } catch (error) {
+                alert('Failed to save settings.');
+            }
+        });
+
+        // Ordinal function for display
+        function addOrdinal(number) {
+            if (!number) return '';
+            const j = number % 10,
+                  k = number % 100;
+            if (j === 1 && k !== 11) return number + 'st';
+            if (j === 2 && k !== 12) return number + 'nd';
+            if (j === 3 && k !== 13) return number + 'rd';
+            return number + 'th';
+        }
+    </script>
+</body>
+</html>
