@@ -4,7 +4,8 @@
       "enabled": true,
       "channelId": "1420758099274240010",
       "messageId": "1421407464158531716",
-      "prompt": "<a:arrow_orange:1421105588871499877> Click Verify to start! <:thumbupp:1421024756102074462>",
+      "lastSent": 0,
+      "prompt": "<a:arrow_orange:1421105588871499877> Click Verify to start! You will receive a captcha to solve. <:thumbupp:1421024756102074462>",
       "rolesOnJoin": ["1420757337395691590"],
       "rolesOnVerify": ["840763928479924235"]
     }
