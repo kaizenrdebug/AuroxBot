@@ -5,7 +5,7 @@ async function init() {
   if (!res.ok) return window.location.href = '/login';
   const data = await res.json();
   user = data.user;
-  guilds = data.guilds.filter(g => g.permissions & 0x20); // Manage Guild
+  guilds = data.guilds.filter(g => (parseInt(g.permissions || '0', 16) & 0x20) !== 0); // Manage Guild
   populateGuildList();
 }
 
@@ -31,8 +31,13 @@ async function loadGuild(id) {
   document.getElementById('guildPanel').classList.remove('hidden');
   document.getElementById('guildName').textContent = g.name;
 
-  document.getElementById('verifyEnabled').checked = g.settings.verify?.enabled || false;
-  document.getElementById('verifyPrompt').value = g.settings.verify?.prompt || '';
+  const verify = g.settings.verify || {};
+  document.getElementById('verifyEnabled').checked = verify.enabled || false;
+  document.getElementById('verifyPrompt').value = verify.prompt || '';
+  document.getElementById('verifyPing').value = verify.ping || '@Visitor';
+  document.getElementById('embedTitle').value = verify.embedTitle || 'VERIFICATION SECTION';
+  document.getElementById('embedColor').value = verify.embedColor || '#0099ff';
+  document.getElementById('gifURL').value = verify.gifURL || '';
 
   // Populate roles & channels
   const rolesSel = document.getElementById('rolesOnJoin');
@@ -48,13 +53,13 @@ async function loadGuild(id) {
     const o1 = document.createElement('option');
     o1.value = r.id;
     o1.textContent = r.name;
-    if (g.settings.verify?.rolesOnJoin?.includes(r.id)) o1.selected = true;
+    if (verify.rolesOnJoin?.includes(r.id)) o1.selected = true;
     rolesSel.appendChild(o1);
 
     const o2 = document.createElement('option');
     o2.value = r.id;
     o2.textContent = r.name;
-    if (g.settings.verify?.rolesOnVerify?.includes(r.id)) o2.selected = true;
+    if (verify.rolesOnVerify?.includes(r.id)) o2.selected = true;
     rolesVer.appendChild(o2);
   });
 
@@ -65,7 +70,7 @@ async function loadGuild(id) {
       const o = document.createElement('option');
       o.value = c.id;
       o.textContent = c.name;
-      if (g.settings.verify?.channelId === c.id) o.selected = true;
+      if (verify.channelId === c.id) o.selected = true;
       channelSel.appendChild(o);
     });
 }
@@ -77,6 +82,10 @@ async function saveSettings() {
     verify: {
       enabled: document.getElementById('verifyEnabled').checked,
       prompt: document.getElementById('verifyPrompt').value,
+      ping: document.getElementById('verifyPing').value,
+      embedTitle: document.getElementById('embedTitle').value,
+      embedColor: document.getElementById('embedColor').value,
+      gifURL: document.getElementById('gifURL').value,
       rolesOnJoin: Array.from(document.getElementById('rolesOnJoin').selectedOptions).map(o => o.value),
       rolesOnVerify: Array.from(document.getElementById('rolesOnVerify').selectedOptions).map(o => o.value),
       channelId: document.getElementById('verifyChannel').value
