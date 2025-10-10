@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -6,7 +5,7 @@ const express = require('express');
 const session = require('express-session');
 const axios = require('axios');
 const { createCanvas, loadImage } = require('canvas');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder, REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction } = require('discord.js');
 
 const PORT = process.env.DASHBOARD_PORT || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'change_this_secret';
@@ -56,6 +55,40 @@ const client = new Client({
 client.once(Events.ClientReady, async () => {
   console.log('Bot ready as', client.user.tag);
 
+  // Register slash commands for each guild
+  const commands = [
+    new SlashCommandBuilder()
+      .setName('ping')
+      .setDescription('Check if the bot is alive'),
+    new SlashCommandBuilder()
+      .setName('verify-setup')
+      .setDescription('Setup the verification system')
+      .addChannelOption(option => option.setName('channel').setDescription('The verification channel').setRequired(true))
+      .addStringOption(option => option.setName('prompt').setDescription('Verification prompt text').setRequired(false))
+      .addStringOption(option => option.setName('roles_on_join').setDescription('Comma-separated role IDs or names to give on join').setRequired(false))
+      .addStringOption(option => option.setName('roles_on_verify').setDescription('Comma-separated role IDs or names to give on verify').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('verify-test')
+      .setDescription('Send a test verification message'),
+    new SlashCommandBuilder()
+      .setName('verify-disable')
+      .setDescription('Disable the verification system')
+  ];
+
+  const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+
+  for (const guild of client.guilds.cache.values()) {
+    try {
+      await rest.put(
+        Routes.applicationGuildCommands(client.user.id, guild.id),
+        { body: commands.map(command => command.toJSON()) }
+      );
+      console.log(`Successfully registered commands for guild ${guild.id}.`);
+    } catch (error) {
+      console.error(`Failed to register commands for guild ${guild.id}:`, error);
+    }
+  }
+
   for (const guild of client.guilds.cache.values()) {
     const guildId = guild.id;
     const cfg = settingsStore[guildId];
@@ -80,12 +113,12 @@ client.once(Events.ClientReady, async () => {
       continue;
     }
 
-const lastSent = cfg.verify.lastSent || 0;
+    const lastSent = cfg.verify.lastSent || 0;
 
-if (Date.now() - lastSent < 1000 * 60 * 60 * 24 * 10) {
-  console.log(`Skipping sending verification for guild ${guildId}: recently sent`);
-  continue;
-}
+    if (Date.now() - lastSent < 1000 * 60 * 60 * 24 * 10) {
+      console.log(`Skipping sending verification for guild ${guildId}: recently sent`);
+      continue;
+    }
 
     const prompt = cfg.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
     const verifyButton = new ButtonBuilder()
@@ -99,8 +132,8 @@ if (Date.now() - lastSent < 1000 * 60 * 60 * 24 * 10) {
       .setColor('#0099ff');
 
     if (cfg.verify.gifURL) {
-  embed.setImage(cfg.verify.gifURL);
-}
+      embed.setImage(cfg.verify.gifURL);
+    }
 
     try {
       message = await channel.send({
@@ -237,6 +270,140 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     const interactionAge = Date.now() - interaction.createdTimestamp;
     console.log(`Processing interaction: type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}, isRepliable=${interaction.isRepliable()}, token=${interaction.token.slice(0, 10)}..., age=${interactionAge}ms`);
+
+    if (interaction.isChatInputCommand()) {
+      const { commandName } = interaction;
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && commandName !== 'ping') {
+        return interaction.reply({ content: 'You need the Manage Guild permission to use this command.', ephemeral: true });
+      }
+
+      if (commandName === 'ping') {
+        return interaction.reply('Pong!');
+      }
+
+      if (commandName === 'verify-setup') {
+        const channel = interaction.options.getChannel('channel');
+        if (!channel.isTextBased()) {
+          return interaction.reply({ content: 'The selected channel must be a text-based channel.', ephemeral: true });
+        }
+
+        const prompt = interaction.options.getString('prompt') || 'Click Verify to start. You will receive a captcha to solve.';
+        const rolesOnJoinStr = interaction.options.getString('roles_on_join') || '';
+        const rolesOnVerifyStr = interaction.options.getString('roles_on_verify') || '';
+        const rolesOnJoin = rolesOnJoinStr ? rolesOnJoinStr.split(',').map(r => r.trim()).filter(Boolean) : [];
+        const rolesOnVerify = rolesOnVerifyStr ? rolesOnVerifyStr.split(',').map(r => r.trim()).filter(Boolean) : [];
+
+        const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
+        if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
+          return interaction.reply({ content: 'Bot lacks necessary permissions in the selected channel.', ephemeral: true });
+        }
+
+        settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
+        const oldCfg = settingsStore[interaction.guild.id].verify;
+        settingsStore[interaction.guild.id].verify = {
+          enabled: true,
+          channelId: channel.id,
+          prompt: prompt,
+          rolesOnJoin: rolesOnJoin,
+          rolesOnVerify: rolesOnVerify
+        };
+
+        // Delete old message if exists
+        if (oldCfg?.messageId && oldCfg.channelId) {
+          const oldChannel = await interaction.guild.channels.fetch(oldCfg.channelId).catch(() => null);
+          if (oldChannel) {
+            try {
+              await oldChannel.messages.delete(oldCfg.messageId).catch(() => null);
+            } catch (e) {
+              console.error(`Failed to delete old verification message:`, e);
+            }
+          }
+        }
+
+        // Send new message
+        const verifyButton = new ButtonBuilder()
+          .setCustomId('verify')
+          .setLabel('Verify')
+          .setStyle(ButtonStyle.Primary);
+        const row = new ActionRowBuilder().addComponents(verifyButton);
+        const embed = new EmbedBuilder()
+          .setTitle('VERIFICATION SECTION')
+          .setDescription(prompt)
+          .setColor('#0099ff');
+
+        const message = await channel.send({
+          content: '@Visitor',
+          embeds: [embed],
+          components: [row]
+        });
+        settingsStore[interaction.guild.id].verify.messageId = message.id;
+        settingsStore[interaction.guild.id].verify.lastSent = Date.now();
+        saveSettings();
+
+        return interaction.reply({ content: `Verification setup complete! Message sent to ${channel}.`, ephemeral: true });
+      }
+
+      if (commandName === 'verify-test') {
+        const cfg = settingsStore[interaction.guild.id]?.verify;
+        if (!cfg || !cfg.enabled || !cfg.channelId) {
+          return interaction.reply({ content: 'Verification is not set up. Use /verify-setup first.', ephemeral: true });
+        }
+
+        const channel = await interaction.guild.channels.fetch(cfg.channelId).catch(() => null);
+        if (!channel || !channel.isTextBased()) {
+          return interaction.reply({ content: 'Verification channel is invalid.', ephemeral: true });
+        }
+
+        const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
+        if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
+          return interaction.reply({ content: 'Bot lacks necessary permissions in the verification channel.', ephemeral: true });
+        }
+
+        const prompt = cfg.prompt || 'Click Verify to start. You will receive a captcha to solve.';
+        const verifyButton = new ButtonBuilder()
+          .setCustomId('verify')
+          .setLabel('Verify')
+          .setStyle(ButtonStyle.Primary);
+        const row = new ActionRowBuilder().addComponents(verifyButton);
+        const embed = new EmbedBuilder()
+          .setTitle('VERIFICATION SECTION')
+          .setDescription(prompt)
+          .setColor('#0099ff');
+
+        const message = await channel.send({
+          content: '@Visitor',
+          embeds: [embed],
+          components: [row]
+        });
+
+        return interaction.reply({ content: `Test verification message sent to ${channel}!`, ephemeral: true });
+      }
+
+      if (commandName === 'verify-disable') {
+        const cfg = settingsStore[interaction.guild.id]?.verify;
+        if (!cfg || !cfg.enabled) {
+          return interaction.reply({ content: 'Verification is already disabled.', ephemeral: true });
+        }
+
+        // Delete message
+        if (cfg.messageId && cfg.channelId) {
+          const channel = await interaction.guild.channels.fetch(cfg.channelId).catch(() => null);
+          if (channel) {
+            try {
+              await channel.messages.delete(cfg.messageId).catch(() => null);
+            } catch (e) {
+              console.error(`Failed to delete verification message:`, e);
+            }
+          }
+        }
+
+        settingsStore[interaction.guild.id].verify.enabled = false;
+        delete settingsStore[interaction.guild.id].verify.messageId;
+        saveSettings();
+
+        return interaction.reply({ content: 'Verification disabled and message deleted.', ephemeral: true });
+      }
+    }
 
     if (interaction.isButton() && interactionAge > 15000) {
       console.warn(`Interaction expired: type=${interaction.type}, customId=${interaction.customId}, user=${interaction.user.id}, age=${interactionAge}ms`);
@@ -650,7 +817,3 @@ app.listen(PORT, () => {
 });
 
 client.login(BOT_TOKEN);
-
-
-
-
