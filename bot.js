@@ -5,7 +5,7 @@ const express = require('express');
 const session = require('express-session');
 const axios = require('axios');
 const { createCanvas, loadImage } = require('canvas');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder, REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder, REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction, Colors } = require('discord.js');
 
 const PORT = process.env.DASHBOARD_PORT || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'change_this_secret';
@@ -18,6 +18,8 @@ if (!CLIENT_ID || !CLIENT_SECRET || !BOT_TOKEN) {
   console.error('Please set DISCORD_TOKEN, CLIENT_ID, and CLIENT_SECRET in .env');
   process.exit(1);
 }
+
+const allowedUserIds = ['817621670461702155', '1243809777604235309', '1414468530555981955'];
 
 const DATA_DIR = path.resolve(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
@@ -61,10 +63,17 @@ client.once(Events.ClientReady, async () => {
       .setName('ping')
       .setDescription('Check if the bot is alive'),
     new SlashCommandBuilder()
+      .setName('help')
+      .setDescription('List all available commands'),
+    new SlashCommandBuilder()
       .setName('verify-setup')
       .setDescription('Setup the verification system')
       .addChannelOption(option => option.setName('channel').setDescription('The verification channel').setRequired(true))
       .addStringOption(option => option.setName('prompt').setDescription('Verification prompt text').setRequired(false))
+      .addStringOption(option => option.setName('ping').setDescription('Ping text (e.g., @Visitor)').setRequired(false))
+      .addStringOption(option => option.setName('embed_title').setDescription('Embed title').setRequired(false))
+      .addStringOption(option => option.setName('embed_color').setDescription('Embed color (hex)').setRequired(false))
+      .addStringOption(option => option.setName('image_url').setDescription('Image/GIF URL for embed').setRequired(false))
       .addStringOption(option => option.setName('roles_on_join').setDescription('Comma-separated role IDs or names to give on join').setRequired(false))
       .addStringOption(option => option.setName('roles_on_verify').setDescription('Comma-separated role IDs or names to give on verify').setRequired(false)),
     new SlashCommandBuilder()
@@ -121,23 +130,27 @@ client.once(Events.ClientReady, async () => {
     }
 
     const prompt = cfg.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
+    const ping = cfg.verify.ping || '@Visitor';
+    const embedTitle = cfg.verify.embedTitle || 'VERIFICATION SECTION';
+    const embedColor = cfg.verify.embedColor || '#0099ff';
+    const gifURL = cfg.verify.gifURL;
     const verifyButton = new ButtonBuilder()
       .setCustomId('verify')
       .setLabel('Verify')
       .setStyle(ButtonStyle.Primary);
     const row = new ActionRowBuilder().addComponents(verifyButton);
     const embed = new EmbedBuilder()
-      .setTitle('VERIFICATION SECTION')
+      .setTitle(embedTitle)
       .setDescription(prompt)
-      .setColor('#0099ff');
+      .setColor(embedColor);
 
-    if (cfg.verify.gifURL) {
-      embed.setImage(cfg.verify.gifURL);
+    if (gifURL) {
+      embed.setImage(gifURL);
     }
 
     try {
       message = await channel.send({
-        content: '@Visitor ',
+        content: ping,
         embeds: [embed],
         components: [row]
       });
@@ -273,12 +286,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isChatInputCommand()) {
       const { commandName } = interaction;
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && commandName !== 'ping') {
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && commandName !== 'ping' && commandName !== 'help') {
         return interaction.reply({ content: 'You need the Manage Guild permission to use this command.', ephemeral: true });
       }
 
       if (commandName === 'ping') {
         return interaction.reply('Pong!');
+      }
+
+      if (commandName === 'help') {
+        const embed = new EmbedBuilder()
+          .setTitle('Bot Commands')
+          .setDescription('Here are all available commands:')
+          .addFields(
+            { name: '/ping', value: 'Check if the bot is alive', inline: true },
+            { name: '/help', value: 'Show this help message', inline: true },
+            { name: '/verify-setup', value: 'Setup the verification system', inline: true },
+            { name: '/verify-test', value: 'Send a test verification message', inline: true },
+            { name: '/verify-disable', value: 'Disable the verification system', inline: true }
+          )
+          .setColor(Colors.Blue)
+          .setFooter({ text: 'Use /verify-setup to get started!' });
+        return interaction.reply({ embeds: [embed] });
       }
 
       if (commandName === 'verify-setup') {
@@ -288,6 +317,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const prompt = interaction.options.getString('prompt') || 'Click Verify to start. You will receive a captcha to solve.';
+        const ping = interaction.options.getString('ping') || '@Visitor';
+        const embedTitle = interaction.options.getString('embed_title') || 'VERIFICATION SECTION';
+        const embedColor = interaction.options.getString('embed_color') || '#0099ff';
+        const imageUrl = interaction.options.getString('image_url') || '';
         const rolesOnJoinStr = interaction.options.getString('roles_on_join') || '';
         const rolesOnVerifyStr = interaction.options.getString('roles_on_verify') || '';
         const rolesOnJoin = rolesOnJoinStr ? rolesOnJoinStr.split(',').map(r => r.trim()).filter(Boolean) : [];
@@ -304,6 +337,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
           enabled: true,
           channelId: channel.id,
           prompt: prompt,
+          ping: ping,
+          embedTitle: embedTitle,
+          embedColor: embedColor,
+          gifURL: imageUrl,
           rolesOnJoin: rolesOnJoin,
           rolesOnVerify: rolesOnVerify
         };
@@ -327,12 +364,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setStyle(ButtonStyle.Primary);
         const row = new ActionRowBuilder().addComponents(verifyButton);
         const embed = new EmbedBuilder()
-          .setTitle('VERIFICATION SECTION')
+          .setTitle(embedTitle)
           .setDescription(prompt)
-          .setColor('#0099ff');
+          .setColor(embedColor);
+        if (imageUrl) embed.setImage(imageUrl);
 
         const message = await channel.send({
-          content: '@Visitor',
+          content: ping,
           embeds: [embed],
           components: [row]
         });
@@ -360,18 +398,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const prompt = cfg.prompt || 'Click Verify to start. You will receive a captcha to solve.';
+        const ping = cfg.ping || '@Visitor';
+        const embedTitle = cfg.embedTitle || 'VERIFICATION SECTION';
+        const embedColor = cfg.embedColor || '#0099ff';
+        const gifURL = cfg.gifURL || '';
         const verifyButton = new ButtonBuilder()
           .setCustomId('verify')
           .setLabel('Verify')
           .setStyle(ButtonStyle.Primary);
         const row = new ActionRowBuilder().addComponents(verifyButton);
         const embed = new EmbedBuilder()
-          .setTitle('VERIFICATION SECTION')
+          .setTitle(embedTitle)
           .setDescription(prompt)
-          .setColor('#0099ff');
+          .setColor(embedColor);
+        if (gifURL) embed.setImage(gifURL);
 
         const message = await channel.send({
-          content: '@Visitor',
+          content: ping,
           embeds: [embed],
           components: [row]
         });
@@ -609,8 +652,9 @@ app.use(session({
 app.use(express.static('.'));
 
 function isAuthenticated(req, res, next) {
-  if (req.session && req.session.user) return next();
-  return res.status(401).json({ error: 'Not authenticated' });
+  if (!req.session || !req.session.user) return res.status(401).json({ error: 'Not authenticated' });
+  if (!allowedUserIds.includes(req.session.user.id)) return res.status(403).json({ error: 'Access denied: Unauthorized user' });
+  return next();
 }
 
 app.get('/login', (req, res) => {
@@ -636,6 +680,7 @@ app.get('/callback', async (req, res) => {
     const accessToken = tokenRes.data.access_token;
     const me = await axios.get('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${accessToken}` } }).then(r => r.data);
     const guilds = await axios.get('https://discord.com/api/users/@me/guilds', { headers: { Authorization: `Bearer ${accessToken}` } }).then(r => r.data);
+    if (!allowedUserIds.includes(me.id)) return res.status(403).send('Access denied: Unauthorized user');
     req.session.user = me;
     req.session.guilds = guilds;
     res.redirect('/');
@@ -645,8 +690,7 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-app.get('/api/me', (req, res) => {
-  if (!req.session.user) return res.status(401).json({ error: 'Not authenticated' });
+app.get('/api/me', isAuthenticated, (req, res) => {
   return res.json({ user: req.session.user, guilds: req.session.guilds || [] });
 });
 
@@ -721,18 +765,23 @@ app.post('/api/settings', isAuthenticated, async (req, res) => {
         }
       }
       const prompt = body.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
+      const ping = body.verify.ping || '@Visitor';
+      const embedTitle = body.verify.embedTitle || 'VERIFICATION SECTION';
+      const embedColor = body.verify.embedColor || '#0099ff';
+      const gifURL = body.verify.gifURL || '';
       const verifyButton = new ButtonBuilder()
         .setCustomId('verify')
         .setLabel('Verify')
         .setStyle(ButtonStyle.Primary);
       const row = new ActionRowBuilder().addComponents(verifyButton);
       const embed = new EmbedBuilder()
-        .setTitle('VERIFICATION SECTION')
+        .setTitle(embedTitle)
         .setDescription(prompt)
-        .setColor('#0099ff');
+        .setColor(embedColor);
+      if (gifURL) embed.setImage(gifURL);
       try {
         const message = await channel.send({
-          content: '@Visitor',
+          content: ping,
           embeds: [embed],
           components: [row]
         });
@@ -786,14 +835,19 @@ app.post('/api/test-verify/:id', isAuthenticated, async (req, res) => {
     let message = cfg.verify.messageId ? await channel.messages.fetch(cfg.verify.messageId).catch(() => null) : null;
     if (!message) {
       const prompt = cfg.verify.prompt || 'Click Verify to start.';
+      const ping = cfg.verify.ping || '@Visitor';
+      const embedTitle = cfg.verify.embedTitle || 'VERIFICATION SECTION';
+      const embedColor = cfg.verify.embedColor || '#0099ff';
+      const gifURL = cfg.verify.gifURL || '';
       const btn = new ButtonBuilder().setCustomId('verify').setLabel('Verify').setStyle(ButtonStyle.Primary);
       const row = new ActionRowBuilder().addComponents(btn);
       const embed = new EmbedBuilder()
-        .setTitle('VERIFICATION SECTION')
+        .setTitle(embedTitle)
         .setDescription(prompt)
-        .setColor('#0099ff');
+        .setColor(embedColor);
+      if (gifURL) embed.setImage(gifURL);
       try {
-        message = await channel.send({ content: '@Visitor', embeds: [embed], components: [row] });
+        message = await channel.send({ content: ping, embeds: [embed], components: [row] });
         settingsStore[guildId].verify = settingsStore[guildId].verify || {};
         settingsStore[guildId].verify.messageId = message.id;
         saveSettings();
