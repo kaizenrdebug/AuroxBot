@@ -4,27 +4,273 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Verification Bot Dashboard</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="dashboard.js" defer></script>
+    <style>
+        :root {
+            --bg-primary: #36393f;
+            --bg-secondary: #2f3136;
+            --bg-tertiary: #202225;
+            --text-primary: #ffffff;
+            --text-secondary: #b9bbbe;
+            --accent: #5865f2;
+            --accent-hover: #4752c4;
+            --success: #3ba55c;
+            --danger: #ed4245;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Whitney', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #app {
+            display: flex;
+            height: 100vh;
+        }
+
+        #sidebar {
+            width: 240px;
+            background-color: var(--bg-secondary);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--bg-tertiary);
+        }
+
+        #sidebar h1 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: var(--text-primary);
+        }
+
+        #guildList {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .guild-item {
+            padding: 10px;
+            margin: 5px 0;
+            background-color: var(--bg-tertiary);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .guild-item:hover {
+            background-color: var(--accent);
+        }
+
+        .guild-item.active {
+            background-color: var(--accent);
+        }
+
+        .guild-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        .guild-name {
+            font-weight: 500;
+        }
+
+        #logoutBtn {
+            background-color: var(--danger);
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 500;
+            margin-top: 10px;
+        }
+
+        #logoutBtn:hover {
+            background-color: #c03537;
+        }
+
+        main {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background-color: var(--bg-primary);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .card {
+            background-color: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid var(--bg-tertiary);
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .form-group input[type="text"],
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            background-color: var(--bg-tertiary);
+            border: 1px solid var(--bg-tertiary);
+            border-radius: 5px;
+            color: var(--text-primary);
+            font-family: inherit;
+        }
+
+        .form-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .form-group input[type="checkbox"] {
+            width: auto;
+            transform: scale(1.2);
+        }
+
+        .form-group select[multiple] {
+            min-height: 100px;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+
+        #saveBtn {
+            background-color: var(--success);
+            color: white;
+        }
+
+        #saveBtn:hover {
+            background-color: #2d8c4a;
+        }
+
+        #testBtn {
+            background-color: var(--accent);
+            color: white;
+        }
+
+        #testBtn:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 5px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        .notification.success {
+            background-color: var(--success);
+        }
+
+        .notification.error {
+            background-color: var(--danger);
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-tertiary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--bg-secondary);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary);
+        }
+    </style>
 </head>
 <body>
     <div id="app">
         <div id="sidebar">
             <h1>Verification Bot</h1>
-            <div id="guildList"></div>
+            <div id="guildList">
+                <div class="guild-item loading">
+                    <div class="guild-icon"></div>
+                    <span class="guild-name">Loading servers...</span>
+                </div>
+            </div>
             <button id="logoutBtn">Logout</button>
         </div>
         <main>
             <div id="guildPanel" class="hidden">
-                <h2 id="guildName" class="card"></h2>
+                <h2 id="guildName" class="card">Select a Server</h2>
                 <div class="card">
                     <div class="form-group">
-                        <label for="verifyEnabled">Enabled</label>
-                        <input type="checkbox" id="verifyEnabled">
+                        <label for="verifyEnabled">
+                            <input type="checkbox" id="verifyEnabled">
+                            Enabled
+                        </label>
                     </div>
                     <div class="form-group">
                         <label for="verifyPrompt">Prompt (Embed Description)</label>
-                        <textarea id="verifyPrompt"></textarea>
+                        <textarea id="verifyPrompt" placeholder="Click the button below to verify and access the server..."></textarea>
                     </div>
                     <div class="form-group">
                         <label for="verifyPing">Ping Text</label>
@@ -62,5 +308,334 @@
             </div>
         </main>
     </div>
+
+    <script>
+        class VerificationBotDashboard {
+            constructor() {
+                this.currentGuild = null;
+                this.guilds = [];
+                this.roles = [];
+                this.channels = [];
+                
+                this.initializeElements();
+                this.bindEvents();
+                this.checkAuth();
+            }
+
+            initializeElements() {
+                // Sidebar elements
+                this.guildList = document.getElementById('guildList');
+                this.logoutBtn = document.getElementById('logoutBtn');
+                
+                // Main panel elements
+                this.guildPanel = document.getElementById('guildPanel');
+                this.guildName = document.getElementById('guildName');
+                
+                // Form elements
+                this.verifyEnabled = document.getElementById('verifyEnabled');
+                this.verifyPrompt = document.getElementById('verifyPrompt');
+                this.verifyPing = document.getElementById('verifyPing');
+                this.embedTitle = document.getElementById('embedTitle');
+                this.embedColor = document.getElementById('embedColor');
+                this.gifURL = document.getElementById('gifURL');
+                this.rolesOnJoin = document.getElementById('rolesOnJoin');
+                this.rolesOnVerify = document.getElementById('rolesOnVerify');
+                this.verifyChannel = document.getElementById('verifyChannel');
+                
+                // Buttons
+                this.saveBtn = document.getElementById('saveBtn');
+                this.testBtn = document.getElementById('testBtn');
+            }
+
+            bindEvents() {
+                this.logoutBtn.addEventListener('click', () => this.logout());
+                this.saveBtn.addEventListener('click', () => this.saveSettings());
+                this.testBtn.addEventListener('click', () => this.testVerify());
+                
+                // Form change listeners for auto-save could be added here
+            }
+
+            async checkAuth() {
+                try {
+                    // Simulate API call to check authentication
+                    const user = await this.apiCall('/api/user');
+                    if (user) {
+                        this.loadGuilds();
+                    } else {
+                        this.redirectToLogin();
+                    }
+                } catch (error) {
+                    this.showNotification('Failed to check authentication', 'error');
+                    this.redirectToLogin();
+                }
+            }
+
+            async loadGuilds() {
+                try {
+                    this.guildList.innerHTML = '<div class="guild-item loading"><span class="guild-name">Loading servers...</span></div>';
+                    
+                    // Simulate API call to get user's guilds
+                    const guilds = await this.apiCall('/api/guilds');
+                    this.guilds = guilds;
+                    
+                    this.renderGuildList();
+                } catch (error) {
+                    this.showNotification('Failed to load servers', 'error');
+                }
+            }
+
+            renderGuildList() {
+                this.guildList.innerHTML = '';
+                
+                if (this.guilds.length === 0) {
+                    this.guildList.innerHTML = '<div class="guild-item"><span class="guild-name">No servers available</span></div>';
+                    return;
+                }
+                
+                this.guilds.forEach(guild => {
+                    const guildElement = document.createElement('div');
+                    guildElement.className = 'guild-item';
+                    guildElement.innerHTML = `
+                        <img src="${guild.icon || 'https://cdn.discordapp.com/embed/avatars/0.png'}" 
+                             alt="${guild.name}" class="guild-icon"
+                             onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+                        <span class="guild-name">${guild.name}</span>
+                    `;
+                    
+                    guildElement.addEventListener('click', () => this.selectGuild(guild));
+                    this.guildList.appendChild(guildElement);
+                });
+            }
+
+            async selectGuild(guild) {
+                this.currentGuild = guild;
+                
+                // Update active state in guild list
+                document.querySelectorAll('.guild-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                event.currentTarget.classList.add('active');
+                
+                // Show guild panel
+                this.guildPanel.classList.remove('hidden');
+                this.guildName.textContent = guild.name;
+                
+                // Load guild data
+                await this.loadGuildData(guild.id);
+            }
+
+            async loadGuildData(guildId) {
+                try {
+                    // Show loading state
+                    this.setFormLoading(true);
+                    
+                    // Simulate API calls to get guild-specific data
+                    const [settings, roles, channels] = await Promise.all([
+                        this.apiCall(`/api/guilds/${guildId}/settings`),
+                        this.apiCall(`/api/guilds/${guildId}/roles`),
+                        this.apiCall(`/api/guilds/${guildId}/channels`)
+                    ]);
+                    
+                    this.roles = roles;
+                    this.channels = channels;
+                    
+                    this.populateForm(settings);
+                    this.populateRolesAndChannels();
+                    
+                } catch (error) {
+                    this.showNotification('Failed to load server data', 'error');
+                } finally {
+                    this.setFormLoading(false);
+                }
+            }
+
+            populateForm(settings) {
+                this.verifyEnabled.checked = settings.enabled || false;
+                this.verifyPrompt.value = settings.prompt || '';
+                this.verifyPing.value = settings.pingText || '';
+                this.embedTitle.value = settings.embedTitle || '';
+                this.embedColor.value = settings.embedColor || '#0099ff';
+                this.gifURL.value = settings.gifURL || '';
+            }
+
+            populateRolesAndChannels() {
+                // Populate roles dropdowns
+                this.populateSelect(this.rolesOnJoin, this.roles, 'name', 'id');
+                this.populateSelect(this.rolesOnVerify, this.roles, 'name', 'id');
+                
+                // Populate channels dropdown (text channels only)
+                const textChannels = this.channels.filter(ch => ch.type === 0); // TEXT channel type
+                this.populateSelect(this.verifyChannel, textChannels, 'name', 'id');
+            }
+
+            populateSelect(selectElement, items, labelKey, valueKey) {
+                selectElement.innerHTML = '';
+                
+                items.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item[valueKey];
+                    option.textContent = item[labelKey];
+                    selectElement.appendChild(option);
+                });
+            }
+
+            async saveSettings() {
+                if (!this.currentGuild) return;
+                
+                try {
+                    this.saveBtn.textContent = 'Saving...';
+                    this.saveBtn.disabled = true;
+                    
+                    const settings = {
+                        enabled: this.verifyEnabled.checked,
+                        prompt: this.verifyPrompt.value,
+                        pingText: this.verifyPing.value,
+                        embedTitle: this.embedTitle.value,
+                        embedColor: this.embedColor.value,
+                        gifURL: this.gifURL.value,
+                        rolesOnJoin: Array.from(this.rolesOnJoin.selectedOptions).map(opt => opt.value),
+                        rolesOnVerify: Array.from(this.rolesOnVerify.selectedOptions).map(opt => opt.value),
+                        verifyChannel: this.verifyChannel.value
+                    };
+                    
+                    // Simulate API call to save settings
+                    await this.apiCall(`/api/guilds/${this.currentGuild.id}/settings`, 'POST', settings);
+                    
+                    this.showNotification('Settings saved successfully!', 'success');
+                    
+                } catch (error) {
+                    this.showNotification('Failed to save settings', 'error');
+                } finally {
+                    this.saveBtn.textContent = 'Save Settings';
+                    this.saveBtn.disabled = false;
+                }
+            }
+
+            async testVerify() {
+                if (!this.currentGuild) {
+                    this.showNotification('Please select a server first', 'error');
+                    return;
+                }
+                
+                try {
+                    this.testBtn.textContent = 'Testing...';
+                    this.testBtn.disabled = true;
+                    
+                    await this.apiCall(`/api/guilds/${this.currentGuild.id}/test-verify`, 'POST');
+                    
+                    this.showNotification('Test verification sent!', 'success');
+                    
+                } catch (error) {
+                    this.showNotification('Failed to send test verification', 'error');
+                } finally {
+                    this.testBtn.textContent = 'Test Verify';
+                    this.testBtn.disabled = false;
+                }
+            }
+
+            logout() {
+                // Simulate logout API call
+                this.apiCall('/api/logout', 'POST');
+                this.redirectToLogin();
+            }
+
+            redirectToLogin() {
+                // Redirect to login page
+                window.location.href = '/login';
+            }
+
+            setFormLoading(loading) {
+                const formElements = [
+                    this.verifyEnabled, this.verifyPrompt, this.verifyPing,
+                    this.embedTitle, this.embedColor, this.gifURL,
+                    this.rolesOnJoin, this.rolesOnVerify, this.verifyChannel,
+                    this.saveBtn, this.testBtn
+                ];
+                
+                formElements.forEach(element => {
+                    if (loading) {
+                        element.classList.add('loading');
+                        element.disabled = true;
+                    } else {
+                        element.classList.remove('loading');
+                        element.disabled = false;
+                    }
+                });
+            }
+
+            showNotification(message, type = 'success') {
+                const notification = document.createElement('div');
+                notification.className = `notification ${type}`;
+                notification.textContent = message;
+                
+                document.body.appendChild(notification);
+                
+                setTimeout(() => {
+                    notification.remove();
+                }, 3000);
+            }
+
+            async apiCall(endpoint, method = 'GET', data = null) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                switch (endpoint) {
+                    case '/api/user':
+                        return { id: '1', username: 'Demo User' };
+                    
+                    case '/api/guilds':
+                        return [
+                            { id: '1', name: 'Demo Server 1', icon: null },
+                            { id: '2', name: 'Demo Server 2', icon: 'https://cdn.discordapp.com/icons/123/abc.png' },
+                            { id: '3', name: 'Another Server', icon: null }
+                        ];
+                    
+                    case '/api/guilds/1/settings':
+                        return {
+                            enabled: true,
+                            prompt: 'Click the button below to verify and access the server!',
+                            pingText: '@Visitor',
+                            embedTitle: 'VERIFICATION REQUIRED',
+                            embedColor: '#5865f2',
+                            gifURL: '',
+                            rolesOnJoin: ['1'],
+                            rolesOnVerify: ['2', '3'],
+                            verifyChannel: '1'
+                        };
+                    
+                    case '/api/guilds/1/roles':
+                        return [
+                            { id: '1', name: '@everyone' },
+                            { id: '2', name: 'Member' },
+                            { id: '3', name: 'Verified' },
+                            { id: '4', name: 'Admin' }
+                        ];
+                    
+                    case '/api/guilds/1/channels':
+                        return [
+                            { id: '1', name: 'general', type: 0 },
+                            { id: '2', name: 'welcome', type: 0 },
+                            { id: '3', name: 'verify', type: 0 },
+                            { id: '4', name: 'Voice Channel', type: 2 }
+                        ];
+                    
+                    default:
+                        if (endpoint.startsWith('/api/guilds/') && endpoint.endsWith('/settings') && method === 'POST') {
+                            return { success: true };
+                        }
+                        if (endpoint.includes('/test-verify')) {
+                            return { success: true };
+                        }
+                        if (endpoint === '/api/logout') {
+                            return { success: true };
+                        }
+                        throw new Error('API endpoint not found');
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            new VerificationBotDashboard();
+        });
+    </script>
 </body>
 </html>
