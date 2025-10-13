@@ -5,7 +5,7 @@ const express = require('express');
 const session = require('express-session');
 const axios = require('axios');
 const { createCanvas, loadImage } = require('canvas');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder, REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction, Colors, MessageFlags } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder, REST, Routes, SlashCommandBuilder, Colors, MessageFlags } = require('discord.js');
 
 const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'change_this_secret';
@@ -118,7 +118,28 @@ client.once(Events.ClientReady, async () => {
       .setDescription('Send a test verification message'),
     new SlashCommandBuilder()
       .setName('verify-disable')
-      .setDescription('Disable the verification system')
+      .setDescription('Disable the verification system'),
+    new SlashCommandBuilder()
+      .setName('verification')
+      .setDescription('Generate a verification code')
+      .addStringOption(option => 
+        option.setName('type')
+          .setDescription('Type of verification code')
+          .setRequired(true)
+          .addChoices(
+            { name: 'Numeric', value: 'numeric' },
+            { name: 'Alphabetic', value: 'alphabetic' },
+            { name: 'Mixed', value: 'mixed' }
+          ))
+      .addIntegerOption(option => 
+        option.setName('length')
+          .setDescription('Length of the code (4-10)')
+          .setRequired(true)
+          .setMinValue(4)
+          .setMaxValue(10)),
+    new SlashCommandBuilder()
+      .setName('verification2')
+      .setDescription('Answer a math question to verify')
   ];
 
   const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
@@ -192,7 +213,7 @@ client.once(Events.ClientReady, async () => {
         components: [row]
       });
       settingsStore[guildId].verify.messageId = message.id;
-      settingsStore[guildId].verify.lastSent = Date.now(); // save last sent time
+      settingsStore[guildId].verify.lastSent = Date.now();
       saveSettings();
       console.log(`Sent verification message for guild ${guildId}, message ID: ${message.id}`);
     } catch (e) {
@@ -201,9 +222,15 @@ client.once(Events.ClientReady, async () => {
   }
 });
 
-// CAPTCHA 
-function randomText(len = 4) {
-  const chars = '0123456789';
+function randomText(len = 4, type = 'mixed') {
+  let chars;
+  if (type === 'numeric') {
+    chars = '0123456789';
+  } else if (type === 'alphabetic') {
+    chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  } else {
+    chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  }
   let s = '';
   for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
@@ -282,6 +309,20 @@ async function createCaptchaImage({ text, avatarURL }) {
   }
 }
 
+function generateMathQuestion() {
+  const num1 = Math.floor(Math.random() * 20) + 1;
+  const num2 = Math.floor(Math.random() * 20) + 1;
+  const operators = ['+', '-', '*'];
+  const operator = operators[Math.floor(Math.random() * operators.length)];
+  let answer;
+  switch (operator) {
+    case '+': answer = num1 + num2; break;
+    case '-': answer = num1 - num2; break;
+    case '*': answer = num1 * num2; break;
+  }
+  return { question: `${num1} ${operator} ${num2} = ?`, answer };
+}
+
 client.on('guildMemberAdd', async (member) => {
   try {
     const guildId = member.guild.id;
@@ -323,7 +364,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isChatInputCommand()) {
       const { commandName } = interaction;
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && !['ping', 'help', 'getserver', 'invite'].includes(commandName)) {
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && !['ping', 'help', 'getserver', 'invite', 'verification', 'verification2'].includes(commandName)) {
         return interaction.reply({ content: 'You need the Manage Guild permission to use this command.', flags: [MessageFlags.Ephemeral] });
       }
 
@@ -333,7 +374,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (commandName === 'invite') {
         const inviteUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&scope=bot%20applications.commands`;
-        return interaction.reply({ content: `Invite me to your server: ${inviteUrl}` });
+        const embed = new EmbedBuilder()
+          .setTitle('Invite Me!')
+          .setDescription(`Add me to your server using [this invite link](${inviteUrl}).\n\nIf you like my bot, please join my [support server](https://discord.gg/zYfhKn5wbm)!`)
+          .setColor(Colors.Blue)
+          .setFooter({ text: 'Thank you for using the bot!' });
+        return interaction.reply({ embeds: [embed] });
       }
 
       if (commandName === 'help') {
@@ -352,7 +398,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             { name: '/unmute', value: 'Unmute a user', inline: true },
             { name: '/verify-setup', value: 'Setup the verification system', inline: true },
             { name: '/verify-test', value: 'Send a test verification message', inline: true },
-            { name: '/verify-disable', value: 'Disable the verification system', inline: true }
+            { name: '/verify-disable', value: 'Disable the verification system', inline: true },
+            { name: '/verification', value: 'Generate a verification code', inline: true },
+            { name: '/verification2', value: 'Answer a math question to verify', inline: true }
           )
           .setColor(Colors.Blue)
           .setFooter({ text: 'Use /verify-setup to get started!' });
@@ -518,7 +566,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           rolesOnVerify: rolesOnVerify
         };
 
-        // Delete old message if exists
         if (oldCfg?.messageId && oldCfg.channelId) {
           const oldChannel = await interaction.guild.channels.fetch(oldCfg.channelId).catch(() => null);
           if (oldChannel) {
@@ -530,7 +577,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
         }
 
-        // Send new message
         const verifyButton = new ButtonBuilder()
           .setCustomId('verify')
           .setLabel('Verify')
@@ -601,7 +647,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Verification is already disabled.', flags: [MessageFlags.Ephemeral] });
         }
 
-        // Delete message
         if (cfg.messageId && cfg.channelId) {
           const channel = await interaction.guild.channels.fetch(cfg.channelId).catch(() => null);
           if (channel) {
@@ -618,6 +663,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
         saveSettings();
 
         return interaction.reply({ content: 'Verification disabled and message deleted.', flags: [MessageFlags.Ephemeral] });
+      }
+
+      if (commandName === 'verification') {
+        const type = interaction.options.getString('type');
+        const length = interaction.options.getInteger('length');
+        const code = randomText(length, type);
+        const embed = new EmbedBuilder()
+          .setTitle('Verification Code')
+          .setDescription(`Your verification code is: **${code}**\n\nPlease use this code to verify your identity.`)
+          .setColor(Colors.Blue)
+          .setFooter({ text: 'This code is for testing purposes.' });
+        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+      }
+
+      if (commandName === 'verification2') {
+        const { question, answer } = generateMathQuestion();
+        const key = `${interaction.guildId}:${interaction.user.id}:math`;
+        captchaMap.set(key, { answer, expires: Date.now() + 1000 * 60 * 5 });
+
+        const modal = new ModalBuilder()
+          .setCustomId(`math_modal_${interaction.user.id}`)
+          .setTitle('Math Verification')
+          .addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder()
+                .setCustomId('math_answer')
+                .setLabel(`Solve: ${question}`)
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+            )
+          );
+
+        try {
+          await interaction.showModal(modal);
+        } catch (e) {
+          console.error(`Failed to show math modal for user ${interaction.user.id}:`, e);
+          return interaction.reply({ content: 'Failed to show math question. Please try again.', flags: [MessageFlags.Ephemeral] });
+        }
       }
     }
 
@@ -764,6 +847,39 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('math_modal_')) {
+      const userId = interaction.customId.split('_')[2];
+      if (userId !== interaction.user.id) {
+        await interaction.reply({ content: 'This modal is not for you.', flags: [MessageFlags.Ephemeral] });
+        return;
+      }
+      const answer = interaction.fields.getTextInputValue('math_answer');
+      const key = `${interaction.guildId}:${interaction.user.id}:math`;
+      const stored = captchaMap.get(key);
+      if (!stored) {
+        console.warn(`No math question found for ${key}`);
+        await interaction.reply({ content: 'No math question found or it expired. Use /verification2 again.', flags: [MessageFlags.Ephemeral] });
+        return;
+      }
+      if (Date.now() > stored.expires) {
+        console.warn(`Math question expired for ${key}`);
+        captchaMap.delete(key);
+        await interaction.reply({ content: 'Math question expired. Use /verification2 again.', flags: [MessageFlags.Ephemeral] });
+        return;
+      }
+
+      if (parseInt(answer) === stored.answer) {
+        captchaMap.delete(key);
+        await interaction.reply({ content: '✅ Correct! You passed the math verification.', flags: [MessageFlags.Ephemeral] });
+        console.log(`User ${interaction.user.id} passed math verification in guild ${interaction.guildId}`);
+      } else {
+        captchaMap.delete(key);
+        await interaction.reply({ content: '❌ Wrong answer. Use /verification2 to try again.', flags: [MessageFlags.Ephemeral] });
+        console.log(`User ${interaction.user.id} failed math verification in guild ${interaction.guildId}: expected ${stored.answer}, got ${answer}`);
+      }
+      return;
+    }
+
     if (interaction.isButton() && interaction.customId.startsWith('enter_')) {
       const userId = interaction.customId.split('_')[1];
       if (userId !== interaction.user.id) {
@@ -812,7 +928,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// Oauth no one even use this lmao
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
