@@ -24,8 +24,11 @@ const allowedUserIds = ['817621670461702155', '1243809777604235309', '1414468530
 const DATA_DIR = path.resolve(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const WARNINGS_FILE = path.join(DATA_DIR, 'warnings.json');
 
 let settingsStore = {};
+let warnStore = {};
+
 try {
   settingsStore = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8') || '{}');
   for (const guildId in settingsStore) {
@@ -39,6 +42,13 @@ try {
   settingsStore = {};
 }
 
+try {
+  warnStore = JSON.parse(fs.readFileSync(WARNINGS_FILE, 'utf8') || '{}');
+} catch (e) {
+  console.error('Failed to load warnings.json:', e);
+  warnStore = {};
+}
+
 function saveSettings() {
   try {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settingsStore, null, 2));
@@ -47,11 +57,19 @@ function saveSettings() {
   }
 }
 
+function saveWarnings() {
+  try {
+    fs.writeFileSync(WARNINGS_FILE, JSON.stringify(warnStore, null, 2));
+  } catch (e) {
+    console.error('Failed to save warnings:', e);
+  }
+}
+
 const captchaMap = new Map();
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages],
-  partials: [Partials.Channel]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages],
+  partials: [Partials.Channel, Partials.Message]
 });
 
 client.once(Events.ClientReady, async () => {
@@ -90,6 +108,19 @@ client.once(Events.ClientReady, async () => {
       .setDescription('Ban a user from the server')
       .addUserOption(option => option.setName('user').setDescription('The user to ban').setRequired(true))
       .addStringOption(option => option.setName('reason').setDescription('Reason for ban').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('warn')
+      .setDescription('Warn a user')
+      .addUserOption(option => option.setName('user').setDescription('The user to warn').setRequired(true))
+      .addStringOption(option => option.setName('reason').setDescription('Reason for warning').setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('warnings')
+      .setDescription('View warnings for a user')
+      .addUserOption(option => option.setName('user').setDescription('The user to check warnings for').setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('clearwarnings')
+      .setDescription('Clear all warnings for a user')
+      .addUserOption(option => option.setName('user').setDescription('The user to clear warnings for').setRequired(true)),
     new SlashCommandBuilder()
       .setName('mute')
       .setDescription('Mute a user for a specified time')
@@ -221,6 +252,54 @@ client.once(Events.ClientReady, async () => {
     }
   }
 });
+
+// Helper function to send DM to user
+async function sendUserDM(user, guild, action, reason) {
+  try {
+    const embed = new EmbedBuilder()
+      .setTitle(`You have been ${action} on ${guild.name}`)
+      .setDescription(`**Reason:** ${reason}`)
+      .setColor(action === 'warned' ? Colors.Yellow : action === 'kicked' ? Colors.Orange : Colors.Red)
+      .setTimestamp()
+      .setFooter({ text: `Server: ${guild.name}` });
+
+    await user.send({ embeds: [embed] });
+    return true;
+  } catch (error) {
+    console.warn(`Could not send DM to ${user.tag}:`, error.message);
+    return false;
+  }
+}
+
+// Warning system functions
+function addWarning(guildId, userId, reason, moderatorId) {
+  if (!warnStore[guildId]) warnStore[guildId] = {};
+  if (!warnStore[guildId][userId]) warnStore[guildId][userId] = [];
+  
+  const warning = {
+    id: Date.now().toString(),
+    reason,
+    moderatorId,
+    timestamp: Date.now()
+  };
+  
+  warnStore[guildId][userId].push(warning);
+  saveWarnings();
+  return warning;
+}
+
+function getWarnings(guildId, userId) {
+  return warnStore[guildId]?.[userId] || [];
+}
+
+function clearWarnings(guildId, userId) {
+  if (warnStore[guildId]?.[userId]) {
+    delete warnStore[guildId][userId];
+    saveWarnings();
+    return true;
+  }
+  return false;
+}
 
 function randomText(len = 4, type = 'mixed') {
   let chars;
@@ -394,6 +473,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             { name: '/getserver icon', value: 'Get the server icon', inline: true },
             { name: '/kick', value: 'Kick a user', inline: true },
             { name: '/ban', value: 'Ban a user', inline: true },
+            { name: '/warn', value: 'Warn a user', inline: true },
+            { name: '/warnings', value: 'View user warnings', inline: true },
+            { name: '/clearwarnings', value: 'Clear user warnings', inline: true },
             { name: '/mute', value: 'Mute a user for a time', inline: true },
             { name: '/unmute', value: 'Unmute a user', inline: true },
             { name: '/verify-setup', value: 'Setup the verification system', inline: true },
@@ -451,6 +533,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'You cannot kick another moderator.', flags: [MessageFlags.Ephemeral] });
         }
         const reason = interaction.options.getString('reason') || 'No reason provided.';
+        
+        // Send DM to user
+        await sendUserDM(user, interaction.guild, 'kicked', reason);
+        
         try {
           await member.kick(reason);
           return interaction.reply({ content: `Successfully kicked ${user.tag} from the server. Reason: ${reason}` });
@@ -466,12 +552,98 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         const user = interaction.options.getUser('user');
         const reason = interaction.options.getString('reason') || 'No reason provided.';
+        
+        // Send DM to user
+        await sendUserDM(user, interaction.guild, 'banned', reason);
+        
         try {
           await interaction.guild.members.ban(user, { reason });
           return interaction.reply({ content: `Successfully banned ${user.tag} from the server. Reason: ${reason}` });
         } catch (error) {
           console.error('Failed to ban member:', error);
           return interaction.reply({ content: 'Failed to ban the user. Check bot permissions.', flags: [MessageFlags.Ephemeral] });
+        }
+      }
+
+      if (commandName === 'warn') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', flags: [MessageFlags.Ephemeral] });
+        }
+        const user = interaction.options.getUser('user');
+        const reason = interaction.options.getString('reason');
+        const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+        
+        if (!member) {
+          return interaction.reply({ content: 'User not found in the server.', flags: [MessageFlags.Ephemeral] });
+        }
+        if (member.id === interaction.user.id) {
+          return interaction.reply({ content: 'You cannot warn yourself.', flags: [MessageFlags.Ephemeral] });
+        }
+        if (member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+          return interaction.reply({ content: 'You cannot warn another moderator.', flags: [MessageFlags.Ephemeral] });
+        }
+
+        // Add warning to store
+        const warning = addWarning(interaction.guild.id, user.id, reason, interaction.user.id);
+        
+        // Send DM to user
+        const dmSent = await sendUserDM(user, interaction.guild, 'warned', reason);
+        
+        const warnings = getWarnings(interaction.guild.id, user.id);
+        
+        const embed = new EmbedBuilder()
+          .setTitle('User Warned')
+          .setDescription(`**User:** ${user.tag} (${user.id})\n**Reason:** ${reason}\n**Total Warnings:** ${warnings.length}`)
+          .setColor(Colors.Yellow)
+          .setFooter({ text: `Warned by ${interaction.user.tag}` })
+          .setTimestamp();
+        
+        if (!dmSent) {
+          embed.addFields({ name: 'Note', value: 'Could not send DM to user.' });
+        }
+        
+        return interaction.reply({ embeds: [embed] });
+      }
+
+      if (commandName === 'warnings') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', flags: [MessageFlags.Ephemeral] });
+        }
+        const user = interaction.options.getUser('user');
+        const warnings = getWarnings(interaction.guild.id, user.id);
+        
+        if (warnings.length === 0) {
+          return interaction.reply({ content: `${user.tag} has no warnings.`, flags: [MessageFlags.Ephemeral] });
+        }
+        
+        const embed = new EmbedBuilder()
+          .setTitle(`Warnings for ${user.tag}`)
+          .setColor(Colors.Yellow)
+          .setFooter({ text: `Total: ${warnings.length} warning(s)` });
+        
+        warnings.forEach((warning, index) => {
+          const moderator = interaction.guild.members.cache.get(warning.moderatorId)?.user.tag || 'Unknown';
+          embed.addFields({
+            name: `Warning #${index + 1}`,
+            value: `**Reason:** ${warning.reason}\n**Moderator:** ${moderator}\n**Date:** <t:${Math.floor(warning.timestamp / 1000)}:R>`,
+            inline: false
+          });
+        });
+        
+        return interaction.reply({ embeds: [embed] });
+      }
+
+      if (commandName === 'clearwarnings') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', flags: [MessageFlags.Ephemeral] });
+        }
+        const user = interaction.options.getUser('user');
+        const cleared = clearWarnings(interaction.guild.id, user.id);
+        
+        if (cleared) {
+          return interaction.reply({ content: `Cleared all warnings for ${user.tag}.`, flags: [MessageFlags.Ephemeral] });
+        } else {
+          return interaction.reply({ content: `${user.tag} has no warnings to clear.`, flags: [MessageFlags.Ephemeral] });
         }
       }
 
@@ -928,6 +1100,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
+// ... rest of the express app code remains the same
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
