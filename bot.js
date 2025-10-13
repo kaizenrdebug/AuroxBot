@@ -202,8 +202,8 @@ client.once(Events.ClientReady, async () => {
 });
 
 // CAPTCHA 
-function randomText(len = 6) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function randomText(len = 4) {
+  const chars = '0123456789';
   let s = '';
   for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
@@ -652,7 +652,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const answer = randomText(6);
+      const answer = randomText(4);
       const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
       let buffer, text;
       try {
