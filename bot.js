@@ -57,7 +57,6 @@ const client = new Client({
 client.once(Events.ClientReady, async () => {
   console.log('Bot ready as', client.user.tag);
 
-  // Register slash commands for each guild
   const commands = [
     new SlashCommandBuilder()
       .setName('ping')
@@ -65,6 +64,41 @@ client.once(Events.ClientReady, async () => {
     new SlashCommandBuilder()
       .setName('help')
       .setDescription('List all available commands'),
+    new SlashCommandBuilder()
+      .setName('getserver')
+      .setDescription('Get server information or icon')
+      .addSubcommand(subcommand =>
+        subcommand
+          .setName('info')
+          .setDescription('Display server information')
+      )
+      .addSubcommand(subcommand =>
+        subcommand
+          .setName('icon')
+          .setDescription('Get the server icon')
+      ),
+    new SlashCommandBuilder()
+      .setName('kick')
+      .setDescription('Kick a user from the server')
+      .addUserOption(option => option.setName('user').setDescription('The user to kick').setRequired(true))
+      .addStringOption(option => option.setName('reason').setDescription('Reason for kick').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('ban')
+      .setDescription('Ban a user from the server')
+      .addUserOption(option => option.setName('user').setDescription('The user to ban').setRequired(true))
+      .addStringOption(option => option.setName('reason').setDescription('Reason for ban').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('mute')
+      .setDescription('Mute a user for a specified time')
+      .addUserOption(option => option.setName('user').setDescription('The user to mute').setRequired(true))
+      .addIntegerOption(option => option.setName('minutes').setDescription('Minutes to mute').setRequired(false))
+      .addIntegerOption(option => option.setName('hours').setDescription('Hours to mute').setRequired(false))
+      .addIntegerOption(option => option.setName('days').setDescription('Days to mute').setRequired(false))
+      .addStringOption(option => option.setName('reason').setDescription('Reason for mute').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('unmute')
+      .setDescription('Unmute a user')
+      .addUserOption(option => option.setName('user').setDescription('The user to unmute').setRequired(true)),
     new SlashCommandBuilder()
       .setName('verify-setup')
       .setDescription('Setup the verification system')
@@ -130,7 +164,7 @@ client.once(Events.ClientReady, async () => {
     }
 
     const prompt = cfg.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
-    const ping = cfg.verify.ping || '@Visitor';
+    const ping = cfg.verify.ping || '@here';
     const embedTitle = cfg.verify.embedTitle || 'VERIFICATION SECTION';
     const embedColor = cfg.verify.embedColor || '#0099ff';
     const gifURL = cfg.verify.gifURL;
@@ -155,7 +189,7 @@ client.once(Events.ClientReady, async () => {
         components: [row]
       });
       settingsStore[guildId].verify.messageId = message.id;
-      settingsStore[guildId].verify.lastSent = Date.now(); // save last sent time
+      settingsStore[guildId].verify.lastSent = Date.now();
       saveSettings();
       console.log(`Sent verification message for guild ${guildId}, message ID: ${message.id}`);
     } catch (e) {
@@ -164,7 +198,6 @@ client.once(Events.ClientReady, async () => {
   }
 });
 
-// CAPTCHA 
 function randomText(len = 6) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let s = '';
@@ -286,7 +319,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isChatInputCommand()) {
       const { commandName } = interaction;
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && commandName !== 'ping' && commandName !== 'help') {
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && !['ping', 'help', 'getserver'].includes(commandName)) {
         return interaction.reply({ content: 'You need the Manage Guild permission to use this command.', ephemeral: true });
       }
 
@@ -301,6 +334,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .addFields(
             { name: '/ping', value: 'Check if the bot is alive', inline: true },
             { name: '/help', value: 'Show this help message', inline: true },
+            { name: '/getserver info', value: 'Display server information', inline: true },
+            { name: '/getserver icon', value: 'Get the server icon', inline: true },
+            { name: '/kick', value: 'Kick a user', inline: true },
+            { name: '/ban', value: 'Ban a user', inline: true },
+            { name: '/mute', value: 'Mute a user for a time', inline: true },
+            { name: '/unmute', value: 'Unmute a user', inline: true },
             { name: '/verify-setup', value: 'Setup the verification system', inline: true },
             { name: '/verify-test', value: 'Send a test verification message', inline: true },
             { name: '/verify-disable', value: 'Disable the verification system', inline: true }
@@ -310,6 +349,130 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return interaction.reply({ embeds: [embed] });
       }
 
+      if (commandName === 'getserver') {
+        const subcommand = interaction.options.getSubcommand();
+        if (subcommand === 'info') {
+          const guild = interaction.guild;
+          const embed = new EmbedBuilder()
+            .setTitle(guild.name)
+            .setThumbnail(guild.iconURL({ dynamic: true, size: 256 }))
+            .addFields(
+              { name: 'Members', value: `${guild.memberCount}`, inline: true },
+              { name: 'Humans', value: `${guild.members.cache.filter(m => !m.user.bot).size}`, inline: true },
+              { name: 'Bots', value: `${guild.members.cache.filter(m => m.user.bot).size}`, inline: true },
+              { name: 'Channels', value: `${guild.channels.cache.size}`, inline: true },
+              { name: 'Roles', value: `${guild.roles.cache.size - 1}`, inline: true },
+              { name: 'Created', value: `<t:${Math.floor(guild.createdTimestamp / 1000)}:F>`, inline: true }
+            )
+            .setColor(Colors.Blue)
+            .setFooter({ text: `Server ID: ${guild.id}` });
+          return interaction.reply({ embeds: [embed] });
+        } else if (subcommand === 'icon') {
+          if (!interaction.guild.iconURL()) {
+            return interaction.reply({ content: 'This server has no icon set.' });
+          }
+          const iconUrl = interaction.guild.iconURL({ dynamic: true, size: 1024 });
+          const attachment = new AttachmentBuilder(iconUrl, { name: 'server-icon.png' });
+          return interaction.reply({ files: [attachment] });
+        }
+      }
+
+      if (commandName === 'kick') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
+          return interaction.reply({ content: 'You need the Kick Members permission to use this command.', ephemeral: true });
+        }
+        const user = interaction.options.getUser('user');
+        const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+        if (!member) {
+          return interaction.reply({ content: 'User not found in the server.', ephemeral: true });
+        }
+        if (member.id === interaction.user.id) {
+          return interaction.reply({ content: 'You cannot kick yourself.', ephemeral: true });
+        }
+        if (member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
+          return interaction.reply({ content: 'You cannot kick another moderator.', ephemeral: true });
+        }
+        const reason = interaction.options.getString('reason') || 'No reason provided.';
+        try {
+          await member.kick(reason);
+          return interaction.reply({ content: `Successfully kicked ${user.tag} from the server. Reason: ${reason}` });
+        } catch (error) {
+          console.error('Failed to kick member:', error);
+          return interaction.reply({ content: 'Failed to kick the user. Check bot permissions.', ephemeral: true });
+        }
+      }
+
+      if (commandName === 'ban') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.BanMembers)) {
+          return interaction.reply({ content: 'You need the Ban Members permission to use this command.', ephemeral: true });
+        }
+        const user = interaction.options.getUser('user');
+        const reason = interaction.options.getString('reason') || 'No reason provided.';
+        try {
+          await interaction.guild.members.ban(user, { reason });
+          return interaction.reply({ content: `Successfully banned ${user.tag} from the server. Reason: ${reason}` });
+        } catch (error) {
+          console.error('Failed to ban member:', error);
+          return interaction.reply({ content: 'Failed to ban the user. Check bot permissions.', ephemeral: true });
+        }
+      }
+
+      if (commandName === 'mute') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
+        }
+        const targetUser = interaction.options.getUser('user');
+        const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+        if (!targetMember) {
+          return interaction.reply({ content: 'User not found in the server.', ephemeral: true });
+        }
+        if (targetMember.id === interaction.user.id) {
+          return interaction.reply({ content: 'You cannot mute yourself.', ephemeral: true });
+        }
+        if (targetMember.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+          return interaction.reply({ content: 'You cannot mute another moderator.', ephemeral: true });
+        }
+        const minutes = interaction.options.getInteger('minutes') || 0;
+        const hours = interaction.options.getInteger('hours') || 0;
+        const days = interaction.options.getInteger('days') || 0;
+        const totalMs = (days * 24 * 60 * 60 * 1000) + (hours * 60 * 60 * 1000) + (minutes * 60 * 1000);
+        if (totalMs === 0) {
+          return interaction.reply({ content: 'You must specify at least one duration (minutes, hours, or days).', ephemeral: true });
+        }
+        if (totalMs > 28 * 24 * 60 * 60 * 1000) {
+          return interaction.reply({ content: 'Timeout duration cannot exceed 28 days.', ephemeral: true });
+        }
+        const reason = interaction.options.getString('reason') || 'No reason provided.';
+        try {
+          await targetMember.timeout(totalMs, reason);
+          return interaction.reply({ content: `Successfully muted ${targetUser.tag} for ${days} days, ${hours} hours, and ${minutes} minutes. Reason: ${reason}` });
+        } catch (error) {
+          console.error('Failed to mute member:', error);
+          return interaction.reply({ content: 'Failed to mute the user. Check bot permissions.', ephemeral: true });
+        }
+      }
+
+      if (commandName === 'unmute') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
+        }
+        const user = interaction.options.getUser('user');
+        const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+        if (!member) {
+          return interaction.reply({ content: 'User not found in the server.', ephemeral: true });
+        }
+        if (!member.isCommunicationDisabled()) {
+          return interaction.reply({ content: 'This user is not currently muted.', ephemeral: true });
+        }
+        try {
+          await member.timeout(0);
+          return interaction.reply({ content: `Successfully unmuted ${user.tag}.` });
+        } catch (error) {
+          console.error('Failed to unmute member:', error);
+          return interaction.reply({ content: 'Failed to unmute the user. Check bot permissions.', ephemeral: true });
+        }
+      }
+
       if (commandName === 'verify-setup') {
         const channel = interaction.options.getChannel('channel');
         if (!channel.isTextBased()) {
@@ -317,7 +480,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const prompt = interaction.options.getString('prompt') || 'Click Verify to start. You will receive a captcha to solve.';
-        const ping = interaction.options.getString('ping') || '@Visitor';
+        const ping = interaction.options.getString('ping') || '@Here';
         const embedTitle = interaction.options.getString('embed_title') || 'VERIFICATION SECTION';
         const embedColor = interaction.options.getString('embed_color') || '#0099ff';
         const imageUrl = interaction.options.getString('image_url') || '';
@@ -345,7 +508,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           rolesOnVerify: rolesOnVerify
         };
 
-        // Delete old message if exists
         if (oldCfg?.messageId && oldCfg.channelId) {
           const oldChannel = await interaction.guild.channels.fetch(oldCfg.channelId).catch(() => null);
           if (oldChannel) {
@@ -357,7 +519,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
         }
 
-        // Send new message
         const verifyButton = new ButtonBuilder()
           .setCustomId('verify')
           .setLabel('Verify')
@@ -398,7 +559,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const prompt = cfg.prompt || 'Click Verify to start. You will receive a captcha to solve.';
-        const ping = cfg.ping || '@Visitor';
+        const ping = cfg.ping || '@here';
         const embedTitle = cfg.embedTitle || 'VERIFICATION SECTION';
         const embedColor = cfg.embedColor || '#0099ff';
         const gifURL = cfg.gifURL || '';
@@ -428,7 +589,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Verification is already disabled.', ephemeral: true });
         }
 
-        // Delete message
         if (cfg.messageId && cfg.channelId) {
           const channel = await interaction.guild.channels.fetch(cfg.channelId).catch(() => null);
           if (channel) {
@@ -639,7 +799,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// Oauth no one even use this lmao
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -765,7 +924,7 @@ app.post('/api/settings', isAuthenticated, async (req, res) => {
         }
       }
       const prompt = body.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
-      const ping = body.verify.ping || '@Visitor';
+      const ping = body.verify.ping || '@here';
       const embedTitle = body.verify.embedTitle || 'VERIFICATION SECTION';
       const embedColor = body.verify.embedColor || '#0099ff';
       const gifURL = body.verify.gifURL || '';
@@ -835,7 +994,7 @@ app.post('/api/test-verify/:id', isAuthenticated, async (req, res) => {
     let message = cfg.verify.messageId ? await channel.messages.fetch(cfg.verify.messageId).catch(() => null) : null;
     if (!message) {
       const prompt = cfg.verify.prompt || 'Click Verify to start.';
-      const ping = cfg.verify.ping || '@Visitor';
+      const ping = cfg.verify.ping || '@here';
       const embedTitle = cfg.verify.embedTitle || 'VERIFICATION SECTION';
       const embedColor = cfg.verify.embedColor || '#0099ff';
       const gifURL = cfg.verify.gifURL || '';
