@@ -5,7 +5,7 @@ const express = require('express');
 const session = require('express-session');
 const axios = require('axios');
 const { createCanvas, loadImage } = require('canvas');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder, REST, Routes, SlashCommandBuilder, Colors, MessageFlags, ChannelType, AuditLogEvent, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder, REST, Routes, SlashCommandBuilder, Colors, ChannelType } = require('discord.js');
 
 const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'change_this_secret';
@@ -209,7 +209,11 @@ client.once(Events.ClientReady, async () => {
       ),
     new SlashCommandBuilder()
       .setName('usage')
-      .setDescription('Detailed usage for commands'),
+      .setDescription('Detailed usage for commands')
+      .addStringOption(option => 
+        option.setName('command')
+          .setDescription('Specific command to get usage for')
+          .setRequired(false)),
     new SlashCommandBuilder()
       .setName('lock')
       .setDescription('Lock a channel')
@@ -240,7 +244,6 @@ client.once(Events.ClientReady, async () => {
     new SlashCommandBuilder()
       .setName('about')
       .setDescription('About the bot'),
-    // Additional commands
     new SlashCommandBuilder()
       .setName('say')
       .setDescription('Make the bot say something')
@@ -481,43 +484,43 @@ function generateMathQuestion() {
   return { question: `${num1} ${operator} ${num2} = ?`, answer };
 }
 
-// Command help data
+// Command help data with detailed usage
 const commandHelp = [
-  { name: '/ping', description: 'Replies with Pong!' },
-  { name: '/help', description: 'Lists all commands' },
-  { name: '/invite', description: 'Gets invite link' },
-  { name: '/getserver info', description: 'Server info' },
-  { name: '/getserver icon', description: 'Server icon' },
-  { name: '/kick <user> [reason]', description: 'Kicks a user' },
-  { name: '/ban <user> [reason]', description: 'Bans a user' },
-  { name: '/warn <user> <reason>', description: 'Warns a user' },
-  { name: '/warnings <user>', description: 'Views warnings' },
-  { name: '/clearwarnings <user>', description: 'Clears warnings' },
-  { name: '/mute <user> [minutes] [hours] [days] [reason]', description: 'Mutes a user' },
-  { name: '/unmute <user>', description: 'Unmutes a user' },
-  { name: '/verify-setup <channel> [options]', description: 'Sets up verification' },
-  { name: '/verify-test', description: 'Tests verification' },
-  { name: '/verify-disable', description: 'Disables verification' },
-  { name: '/verification <type> <length>', description: 'Generates code' },
-  { name: '/verification2', description: 'Math verification' },
-  { name: '/cw <word>', description: 'Adds censored word' },
-  { name: '/ucw <word>', description: 'Removes censored word' },
-  { name: '/cwl', description: 'Lists censored words' },
-  { name: '/prefix add <prefix>', description: 'Adds prefix' },
-  { name: '/prefix remove <prefix>', description: 'Removes prefix' },
-  { name: '/prefix list', description: 'Lists prefixes' },
-  { name: '/prefix clear', description: 'Clears prefixes' },
-  { name: '/usage', description: 'Detailed command usage' },
-  { name: '/lock [channel]', description: 'Locks channel' },
-  { name: '/unlock [channel]', description: 'Unlocks channel' },
-  { name: '/uptime', description: 'Bot uptime' },
-  { name: '/dice [sides]', description: 'Rolls dice' },
-  { name: '/coin', description: 'Flips coin' },
-  { name: '/role <user> <role>', description: 'Assigns role' },
-  { name: '/audit [limit]', description: 'Views audit logs' },
-  { name: '/about', description: 'Bot info' },
-  { name: '/say <message>', description: 'Bot says message' },
-  { name: '/poll <question> <options>', description: 'Creates poll' },
+  { name: '/ping', description: 'Replies with Pong!', usage: 'Use `/ping` to check if the bot is responsive.' },
+  { name: '/help', description: 'Lists all commands', usage: 'Use `/help` to see a list of all available commands.' },
+  { name: '/invite', description: 'Gets invite link', usage: 'Use `/invite` to get a link to add the bot to your server.' },
+  { name: '/getserver info', description: 'Server info', usage: 'Use `/getserver info` to display server details like member count and channels.' },
+  { name: '/getserver icon', description: 'Server icon', usage: 'Use `/getserver icon` to get the server’s icon image.' },
+  { name: '/kick <user> [reason]', description: 'Kicks a user', usage: 'Use `/kick @user [reason]` to kick a user. Requires Kick Members permission.' },
+  { name: '/ban <user> [reason]', description: 'Bans a user', usage: 'Use `/ban @user [reason]` to ban a user. Requires Ban Members permission.' },
+  { name: '/warn <user> <reason>', description: 'Warns a user', usage: 'Use `/warn @user <reason>` to warn a user. Requires Moderate Members permission.' },
+  { name: '/warnings <user>', description: 'Views warnings', usage: 'Use `/warnings @user` to see a user’s warnings. Requires Moderate Members permission.' },
+  { name: '/clearwarnings <user>', description: 'Clears warnings', usage: 'Use `/clearwarnings @user` to clear a user’s warnings. Requires Moderate Members permission.' },
+  { name: '/mute <user> [minutes] [hours] [days] [reason]', description: 'Mutes a user', usage: 'Use `/mute @user [minutes] [hours] [days] [reason]` to mute a user. Duration up to 28 days. Requires Moderate Members permission.' },
+  { name: '/unmute <user>', description: 'Unmutes a user', usage: 'Use `/unmute @user` to unmute a user. Requires Moderate Members permission.' },
+  { name: '/verify-setup <channel> [options]', description: 'Sets up verification', usage: 'Use `/verify-setup #channel [prompt] [ping] [embed_title] [embed_color] [image_url] [roles_on_join] [roles_on_verify]` to configure verification. Example: `/verify-setup #verify Welcome! @everyone Verification #FF0000 https://example.com/image.png Admin,Moderator Member`.' },
+  { name: '/verify-test', description: 'Tests verification', usage: 'Use `/verify-test` to send a test verification message. Requires Manage Guild permission.' },
+  { name: '/verify-disable', description: 'Disables verification', usage: 'Use `/verify-disable` to turn off verification. Requires Manage Guild permission.' },
+  { name: '/verification <type> <length>', description: 'Generates code', usage: 'Use `/verification <type: numeric|alphabetic|mixed> <length: 4-10>` to generate a test verification code. Example: `/verification mixed 6`.' },
+  { name: '/verification2', description: 'Math verification', usage: 'Use `/verification2` to get a math question for verification.' },
+  { name: '/cw <word>', description: 'Adds censored word', usage: 'Use `/cw <word>` to add a word to the censor list. Requires Manage Guild permission.' },
+  { name: '/ucw <word>', description: 'Removes censored word', usage: 'Use `/ucw <word>` to remove a word from the censor list. Requires Manage Guild permission.' },
+  { name: '/cwl', description: 'Lists censored words', usage: 'Use `/cwl` to list all censored words. Requires Manage Guild permission.' },
+  { name: '/prefix add <prefix>', description: 'Adds prefix', usage: 'Use `/prefix add <prefix>` to add a command prefix. Example: `/prefix add .`.' },
+  { name: '/prefix remove <prefix>', description: 'Removes prefix', usage: 'Use `/prefix remove <prefix>` to remove a prefix. Example: `/prefix remove .`.' },
+  { name: '/prefix list', description: 'Lists prefixes', usage: 'Use `/prefix list` to see all prefixes.' },
+  { name: '/prefix clear', description: 'Clears prefixes', usage: 'Use `/prefix clear` to remove all prefixes. Requires Manage Guild permission.' },
+  { name: '/usage [command]', description: 'Detailed command usage', usage: 'Use `/usage [command]` to get detailed usage for a command or all commands. Example: `/usage ping`.' },
+  { name: '/lock [channel]', description: 'Locks channel', usage: 'Use `/lock [#channel]` to lock a channel. Defaults to current channel. Requires Manage Channels permission.' },
+  { name: '/unlock [channel]', description: 'Unlocks channel', usage: 'Use `/unlock [#channel]` to unlock a channel. Defaults to current channel. Requires Manage Channels permission.' },
+  { name: '/uptime', description: 'Bot uptime', usage: 'Use `/uptime` to see how long the bot has been running.' },
+  { name: '/dice [sides]', description: 'Rolls dice', usage: 'Use `/dice [sides]` to roll a die. Defaults to 6 sides. Example: `/dice 20`.' },
+  { name: '/coin', description: 'Flips coin', usage: 'Use `/coin` to flip a coin (Heads or Tails).' },
+  { name: '/role <user> <role>', description: 'Assigns role', usage: 'Use `/role @user @role` to assign a role to a user. Requires Manage Roles permission.' },
+  { name: '/audit [limit]', description: 'Views audit logs', usage: 'Use `/audit [limit]` to view recent audit logs. Defaults to 10 entries. Requires View Audit Log permission.' },
+  { name: '/about', description: 'Bot info', usage: 'Use `/about` to see information about the bot.' },
+  { name: '/say <message>', description: 'Bot says message', usage: 'Use `/say <message>` to make the bot send a message. Example: `/say Hello world!`.' },
+  { name: '/poll <question> <options>', description: 'Creates poll', usage: 'Use `/poll <question> <options>` to create a poll. Options are comma-separated. Example: `/poll Favorite color? Red,Blue,Green`.' },
 ];
 
 client.on('guildMemberAdd', async (member) => {
@@ -581,11 +584,42 @@ client.on(Events.MessageCreate, async (message) => {
   const args = message.content.slice(prefix.length).trim().split(/ +/);
   const commandName = args.shift().toLowerCase();
 
-  // Map prefix commands to slash equivalents or handle here
   const commandsMap = {
-    ping: () => message.reply('Pong!'),
-    help: () => handleHelp(message),
-    // Add others as needed, or call the same functions as slash
+    ping: async () => await message.reply('Pong!'),
+    help: async () => {
+      const embed = new EmbedBuilder()
+        .setTitle('Bot Commands')
+        .setDescription('Available commands (use /usage for details):')
+        .addFields(commandHelp.slice(0, 10).map(cmd => ({ name: cmd.name, value: cmd.description, inline: true })))
+        .setColor(Colors.Blue);
+      await message.reply({ embeds: [embed] });
+    },
+    coin: async () => {
+      const result = Math.random() < 0.5 ? 'Heads' : 'Tails';
+      await message.reply(`The coin landed on ${result}!`);
+    },
+    dice: async () => {
+      const sides = parseInt(args[0]) || 6;
+      if (isNaN(sides) || sides < 1) return await message.reply('Please provide a valid number of sides.');
+      const roll = Math.floor(Math.random() * sides) + 1;
+      await message.reply(`You rolled a ${roll}! (1-${sides})`);
+    },
+    uptime: async () => {
+      const uptime = client.uptime;
+      const days = Math.floor(uptime / 86400000);
+      const hours = Math.floor(uptime / 3600000) % 24;
+      const minutes = Math.floor(uptime / 60000) % 60;
+      const seconds = Math.floor(uptime / 1000) % 60;
+      await message.reply(`Uptime: ${days}d ${hours}h ${minutes}m ${seconds}s`);
+    },
+    about: async () => {
+      const embed = new EmbedBuilder()
+        .setTitle('About Aurox Bot')
+        .setDescription('**Aurox Bot** is a multi-purpose Discord bot with moderation, verification, and fun commands.\n\n**Features**:\n- Moderation (kick, ban, mute, warn)\n- Verification with captcha/math\n- Fun commands (dice, coin, poll)\n\nCreated by **aurox.x**.\nJoin the [support server](https://discord.gg/zYfhKn5wbm) for help!')
+        .setColor(Colors.Gold)
+        .setTimestamp();
+      await message.reply({ embeds: [embed] });
+    },
   };
 
   if (commandsMap[commandName]) {
@@ -593,19 +627,12 @@ client.on(Events.MessageCreate, async (message) => {
       await commandsMap[commandName]();
     } catch (e) {
       console.error(`Prefix command error: ${commandName}`, e);
+      await message.reply({ content: 'An error occurred with this prefix command. Try the slash command instead.', ephemeral: true });
     }
+  } else {
+    await message.reply({ content: `Unknown prefix command: ${commandName}. Use /help for a list of commands.`, ephemeral: true });
   }
 });
-
-// Function for help in prefix
-async function handleHelp(message) {
-  const embed = new EmbedBuilder()
-    .setTitle('Bot Commands')
-    .setDescription('Here are all available commands:')
-    .addFields(commandHelp.slice(0, 10).map(cmd => ({ name: cmd.name, value: cmd.description, inline: true })))
-    .setColor(Colors.Blue);
-  await message.reply({ embeds: [embed] });
-}
 
 client.on(Events.InteractionCreate, async (interaction) => {
   const interactionAge = Date.now() - interaction.createdTimestamp;
@@ -687,7 +714,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         const reason = interaction.options.getString('reason') || 'No reason provided.';
         
-        // Send DM to user
         await sendUserDM(user, interaction.guild, 'kicked', reason);
         
         try {
@@ -706,7 +732,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const user = interaction.options.getUser('user');
         const reason = interaction.options.getString('reason') || 'No reason provided.';
         
-        // Send DM to user
         await sendUserDM(user, interaction.guild, 'banned', reason);
         
         try {
@@ -736,12 +761,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'You cannot warn another moderator.', ephemeral: true });
         }
 
-        // Add warning to store
         const warning = addWarning(interaction.guild.id, user.id, reason, interaction.user.id);
-        
-        // Send DM to user
         const dmSent = await sendUserDM(user, interaction.guild, 'warned', reason);
-        
         const warnings = getWarnings(interaction.guild.id, user.id);
         
         const embed = new EmbedBuilder()
@@ -831,7 +852,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: `Successfully muted ${targetUser.tag} for ${days} days, ${hours} hours, and ${minutes} minutes. Reason: ${reason}` });
         } catch (error) {
           console.error('Failed to mute member:', error);
-          return interaction.reply({ content: 'Failed to mute the user. Check bot permissions and role hierarchy (bot role must be above target\'s).', ephemeral: true });
+          return interaction.reply({ content: 'Failed to mute the user. Check bot permissions and ensure the bot’s role is above the target’s.', ephemeral: true });
         }
       }
 
@@ -852,7 +873,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: `Successfully unmuted ${user.tag}.` });
         } catch (error) {
           console.error('Failed to unmute member:', error);
-          return interaction.reply({ content: 'Failed to unmute the user. Check bot permissions and role hierarchy (bot role must be above target\'s).', ephemeral: true });
+          return interaction.reply({ content: 'Failed to unmute the user. Check bot permissions and ensure the bot’s role is above the target’s.', ephemeral: true });
         }
       }
 
@@ -913,16 +934,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setColor(embedColor);
         if (imageUrl) embed.setImage(imageUrl);
 
-        const message = await channel.send({
-          content: ping,
-          embeds: [embed],
-          components: [row]
-        });
-        settingsStore[interaction.guild.id].verify.messageId = message.id;
-        settingsStore[interaction.guild.id].verify.lastSent = Date.now();
-        saveSettings();
-
-        return interaction.reply({ content: `Verification setup complete! Message sent to ${channel}.`, ephemeral: true });
+        try {
+          const message = await channel.send({
+            content: ping,
+            embeds: [embed],
+            components: [row]
+          });
+          settingsStore[interaction.guild.id].verify.messageId = message.id;
+          settingsStore[interaction.guild.id].verify.lastSent = Date.now();
+          saveSettings();
+          return interaction.reply({ content: `Verification setup complete! Message sent to ${channel}.`, ephemeral: true });
+        } catch (e) {
+          console.error('Failed to send verification message:', e);
+          return interaction.reply({ content: 'Failed to send verification message. Check bot permissions.', ephemeral: true });
+        }
       }
 
       if (commandName === 'verify-test') {
@@ -957,13 +982,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setColor(embedColor);
         if (gifURL) embed.setImage(gifURL);
 
-        const message = await channel.send({
-          content: ping,
-          embeds: [embed],
-          components: [row]
-        });
-
-        return interaction.reply({ content: `Test verification message sent to ${channel}!`, ephemeral: true });
+        try {
+          await channel.send({
+            content: ping,
+            embeds: [embed],
+            components: [row]
+          });
+          return interaction.reply({ content: `Test verification message sent to ${channel}!`, ephemeral: true });
+        } catch (e) {
+          console.error('Failed to send test verification message:', e);
+          return interaction.reply({ content: 'Failed to send test message. Check bot permissions.', ephemeral: true });
+        }
       }
 
       if (commandName === 'verify-disable') {
@@ -1110,21 +1139,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (commandName === 'usage') {
-        let page = 0;
-        const perPage = 5;
-        const totalPages = Math.ceil(commandHelp.length / perPage);
-
+        const specificCommand = interaction.options.getString('command')?.toLowerCase();
         const embed = new EmbedBuilder()
           .setTitle('Command Usage')
-          .setColor(Colors.Green)
-          .setFooter({ text: `Page 1/${totalPages}` });
+          .setColor(Colors.Green);
+
+        if (specificCommand) {
+          const cmd = commandHelp.find(c => c.name.toLowerCase() === specificCommand || c.name.toLowerCase().startsWith(specificCommand));
+          if (!cmd) {
+            return interaction.reply({ content: `Command "${specificCommand}" not found. Use /usage for all commands.`, ephemeral: true });
+          }
+          embed.setDescription(`**${cmd.name}**\n${cmd.usage}`);
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        const perPage = 5;
+        let page = 0;
+        const totalPages = Math.ceil(commandHelp.length / perPage);
 
         const updateEmbed = () => {
           embed.setDescription('');
           const start = page * perPage;
           const end = start + perPage;
           commandHelp.slice(start, end).forEach(cmd => {
-            embed.addFields({ name: cmd.name, value: cmd.description, inline: false });
+            embed.addFields({ name: cmd.name, value: cmd.usage, inline: false });
           });
           embed.setFooter({ text: `Page ${page + 1}/${totalPages}` });
         };
@@ -1137,24 +1175,41 @@ client.on(Events.InteractionCreate, async (interaction) => {
             new ButtonBuilder().setCustomId('next_usage').setLabel('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page === totalPages - 1)
           );
 
-        const msg = await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+        try {
+          const msg = await interaction.reply({ embeds: [embed], components: [row], ephemeral: true, fetchReply: true });
 
-        const collector = msg.createMessageComponentCollector({ time: 60000 });
+          const collector = msg.createMessageComponentCollector({ time: 60000 });
 
-        collector.on('collect', async (i) => {
-          if (i.user.id !== interaction.user.id) return;
-          if (i.customId === 'prev_usage') page--;
-          if (i.customId === 'next_usage') page++;
-          updateEmbed();
-          await i.update({ embeds: [embed], components: [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('prev_usage').setLabel('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
-            new ButtonBuilder().setCustomId('next_usage').setLabel('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page === totalPages - 1)
-          )] });
-        });
+          collector.on('collect', async (i) => {
+            if (i.user.id !== interaction.user.id) {
+              return i.reply({ content: 'This button is not for you.', ephemeral: true });
+            }
+            if (i.customId === 'prev_usage') page--;
+            if (i.customId === 'next_usage') page++;
+            updateEmbed();
+            try {
+              await i.update({ embeds: [embed], components: [
+                new ActionRowBuilder().addComponents(
+                  new ButtonBuilder().setCustomId('prev_usage').setLabel('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+                  new ButtonBuilder().setCustomId('next_usage').setLabel('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page === totalPages - 1)
+                )
+              ] });
+            } catch (e) {
+              console.error('Failed to update usage embed:', e);
+            }
+          });
 
-        collector.on('end', () => {
-          msg.edit({ components: [] }).catch(() => {});
-        });
+          collector.on('end', () => {
+            try {
+              msg.edit({ components: [] }).catch(() => {});
+            } catch (e) {
+              console.error('Failed to disable usage buttons:', e);
+            }
+          });
+        } catch (e) {
+          console.error('Failed to send usage embed:', e);
+          return interaction.reply({ content: 'Failed to display usage. Check bot permissions.', ephemeral: true });
+        }
       }
 
       if (commandName === 'lock') {
@@ -1243,51 +1298,72 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'You need View Audit Log permission.', ephemeral: true });
         }
         const limit = interaction.options.getInteger('limit') || 10;
-        const logs = await interaction.guild.fetchAuditLogs({ limit });
-        const embed = new EmbedBuilder()
-          .setTitle('Audit Logs')
-          .setColor(Colors.Purple);
-        logs.entries.forEach((entry) => {
-          embed.addFields({
-            name: `${entry.action} by ${entry.executor.tag}`,
-            value: `Target: ${entry.target?.tag || 'N/A'}\nReason: ${entry.reason || 'N/A'}\nTime: <t:${Math.floor(entry.createdTimestamp / 1000)}:R>`,
-            inline: false
+        try {
+          const logs = await interaction.guild.fetchAuditLogs({ limit });
+          const embed = new EmbedBuilder()
+            .setTitle('Audit Logs')
+            .setColor(Colors.Purple);
+          logs.entries.forEach((entry) => {
+            embed.addFields({
+              name: `${entry.action} by ${entry.executor.tag}`,
+              value: `Target: ${entry.target?.tag || 'N/A'}\nReason: ${entry.reason || 'N/A'}\nTime: <t:${Math.floor(entry.createdTimestamp / 1000)}:R>`,
+              inline: false
+            });
           });
-        });
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        } catch (e) {
+          console.error('Failed to fetch audit logs:', e);
+          return interaction.reply({ content: 'Failed to fetch audit logs. Check permissions.', ephemeral: true });
+        }
       }
 
       if (commandName === 'about') {
-        const embed = new EmbedBuilder()
-          .setTitle('About the Bot')
-          .setDescription(`**Aurox Bot**\n\n### Features\n- Moderation tools\n- Verification system\n- Fun commands\n\n*Made by aurox.x*\n\n__Support__: [Discord](https://discord.gg/zYfhKn5wbm)`)
-          .setColor(Colors.Gold);
-        return interaction.reply({ embeds: [embed] });
+        try {
+          const embed = new EmbedBuilder()
+            .setTitle('About Aurox Bot')
+            .setDescription('**Aurox Bot** is a multi-purpose Discord bot with moderation, verification, and fun commands.\n\n**Features**:\n- Moderation (kick, ban, mute, warn)\n- Verification with captcha/math\n- Fun commands (dice, coin, poll)\n\nCreated by **aurox.x**.\nJoin the [support server](https://discord.gg/zYfhKn5wbm) for help!')
+            .setColor(Colors.Gold)
+            .setTimestamp();
+          return interaction.reply({ embeds: [embed] });
+        } catch (e) {
+          console.error('Failed to send about embed:', e);
+          return interaction.reply({ content: 'Failed to display bot info. Check bot permissions.', ephemeral: true });
+        }
       }
 
       if (commandName === 'say') {
         const msg = interaction.options.getString('message');
-        await interaction.channel.send(msg);
-        return interaction.reply({ content: 'Message sent.', ephemeral: true });
+        try {
+          await interaction.channel.send(msg);
+          return interaction.reply({ content: 'Message sent.', ephemeral: true });
+        } catch (e) {
+          console.error('Failed to send say message:', e);
+          return interaction.reply({ content: 'Failed to send message. Check bot permissions.', ephemeral: true });
+        }
       }
 
       if (commandName === 'poll') {
         const question = interaction.options.getString('question');
         const optionsStr = interaction.options.getString('options');
         const options = optionsStr.split(',').map(o => o.trim());
-        const embed = new EmbedBuilder()
-          .setTitle('Poll: ' + question)
-          .setDescription(options.map((o, i) => `${i+1}. ${o}`).join('\n'))
-          .setColor(Colors.Green);
-        const pollMsg = await interaction.reply({ embeds: [embed], fetchReply: true });
-        for (let i = 1; i <= options.length; i++) {
-          await pollMsg.react(`${i}️⃣`);
+        try {
+          const embed = new EmbedBuilder()
+            .setTitle('Poll: ' + question)
+            .setDescription(options.map((o, i) => `${i+1}. ${o}`).join('\n'))
+            .setColor(Colors.Green);
+          const pollMsg = await interaction.reply({ embeds: [embed], fetchReply: true });
+          for (let i = 1; i <= Math.min(options.length, 10); i++) {
+            await pollMsg.react(`${i}️⃣`);
+          }
+        } catch (e) {
+          console.error('Failed to create poll:', e);
+          return interaction.reply({ content: 'Failed to create poll. Check bot permissions.', ephemeral: true });
         }
       }
     }
 
-    if (interaction.isButton() && interaction.customId.startsWith('prev_usage') || interaction.customId.startsWith('next_usage')) {
-      // Handled in collector
+    if (interaction.isButton() && (interaction.customId === 'prev_usage' || interaction.customId === 'next_usage')) {
+      // Handled in usage command collector
       return;
     }
 
@@ -1354,6 +1430,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.isButton() && interaction.customId.startsWith('enter_')) {
+      const userId = interaction.customId.split('_')[1];
+      if (userId !== interaction.user.id) {
+        await interaction.reply({ content: 'This button is not for you.', ephemeral: true });
+        return;
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_${interaction.user.id}`)
+        .setTitle('Enter Captcha')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('captcha_answer')
+              .setLabel('Captcha Answer')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          )
+        );
+
+      try {
+        await interaction.showModal(modal);
+      } catch (e) {
+        console.error(`Failed to show captcha modal for user ${interaction.user.id}:`, e);
+        await interaction.reply({ content: 'Failed to show captcha input. Please try again.', ephemeral: true });
+      }
+      return;
+    }
+
     if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('modal_')) {
       const userId = interaction.customId.split('_')[1];
       if (userId !== interaction.user.id) {
@@ -1361,7 +1466,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
       const rawAnswer = interaction.fields.getTextInputValue('captcha_answer');
-      const rawAnswerHex = Buffer.from(rawAnswer, 'utf8').toString('hex');
       const answer = rawAnswer.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
       const key = `${interaction.guildId}:${interaction.user.id}`;
       const stored = captchaMap.get(key);
@@ -1377,7 +1481,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      console.log(`Comparing in guild ${interaction.guildId}: raw='${rawAnswer}' (length: ${rawAnswer.length}, hex: ${rawAnswerHex}), sanitized='${answer}' (length: ${answer.length}), stored='${stored.answer}' (length: ${stored.answer.length}, raw: ${JSON.stringify(stored.answer)})`);
+      console.log(`Comparing in guild ${interaction.guildId}: raw='${rawAnswer}', sanitized='${answer}', stored='${stored.answer}'`);
       if (answer === stored.answer.toUpperCase()) {
         const cfg = settingsStore[interaction.guildId];
         const rolesOnJoin = Array.isArray(cfg?.verify?.rolesOnJoin) ? cfg.verify.rolesOnJoin : [];
@@ -1747,3 +1851,4 @@ app.listen(PORT, () => {
 });
 
 client.login(BOT_TOKEN);
+
