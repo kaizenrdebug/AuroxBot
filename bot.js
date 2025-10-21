@@ -5,7 +5,7 @@ const express = require('express');
 const session = require('express-session');
 const axios = require('axios');
 const { createCanvas, loadImage } = require('canvas');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder, REST, Routes, SlashCommandBuilder, Colors, MessageFlags } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder, REST, Routes, SlashCommandBuilder, Colors, MessageFlags, ChannelType, AuditLogEvent, Collection } = require('discord.js');
 
 const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'change_this_secret';
@@ -68,7 +68,7 @@ function saveWarnings() {
 const captchaMap = new Map();
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages],
   partials: [Partials.Channel, Partials.Message]
 });
 
@@ -170,7 +170,86 @@ client.once(Events.ClientReady, async () => {
           .setMaxValue(10)),
     new SlashCommandBuilder()
       .setName('verification2')
-      .setDescription('Answer a math question to verify')
+      .setDescription('Answer a math question to verify'),
+    new SlashCommandBuilder()
+      .setName('cw')
+      .setDescription('Add a censored word')
+      .addStringOption(option => option.setName('word').setDescription('The word to censor').setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('ucw')
+      .setDescription('Remove a censored word')
+      .addStringOption(option => option.setName('word').setDescription('The word to uncensor').setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('cwl')
+      .setDescription('List censored words'),
+    new SlashCommandBuilder()
+      .setName('prefix')
+      .setDescription('Manage prefixes')
+      .addSubcommand(subcommand =>
+        subcommand
+          .setName('add')
+          .setDescription('Add a prefix')
+          .addStringOption(option => option.setName('prefix').setDescription('The prefix to add').setRequired(true))
+      )
+      .addSubcommand(subcommand =>
+        subcommand
+          .setName('remove')
+          .setDescription('Remove a prefix')
+          .addStringOption(option => option.setName('prefix').setDescription('The prefix to remove').setRequired(true))
+      )
+      .addSubcommand(subcommand =>
+        subcommand
+          .setName('list')
+          .setDescription('List prefixes')
+      )
+      .addSubcommand(subcommand =>
+        subcommand
+          .setName('clear')
+          .setDescription('Clear all prefixes')
+      ),
+    new SlashCommandBuilder()
+      .setName('usage')
+      .setDescription('Detailed usage for commands'),
+    new SlashCommandBuilder()
+      .setName('lock')
+      .setDescription('Lock a channel')
+      .addChannelOption(option => option.setName('channel').setDescription('The channel to lock').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('unlock')
+      .setDescription('Unlock a channel')
+      .addChannelOption(option => option.setName('channel').setDescription('The channel to unlock').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('uptime')
+      .setDescription('Bot uptime'),
+    new SlashCommandBuilder()
+      .setName('dice')
+      .setDescription('Roll a dice')
+      .addIntegerOption(option => option.setName('sides').setDescription('Number of sides (default 6)').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('coin')
+      .setDescription('Flip a coin'),
+    new SlashCommandBuilder()
+      .setName('role')
+      .setDescription('Assign a role to a user')
+      .addUserOption(option => option.setName('user').setDescription('The user').setRequired(true))
+      .addRoleOption(option => option.setName('role').setDescription('The role').setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('audit')
+      .setDescription('View recent audit logs')
+      .addIntegerOption(option => option.setName('limit').setDescription('Number of entries (default 10)').setRequired(false)),
+    new SlashCommandBuilder()
+      .setName('about')
+      .setDescription('About the bot'),
+    // Additional commands
+    new SlashCommandBuilder()
+      .setName('say')
+      .setDescription('Make the bot say something')
+      .addStringOption(option => option.setName('message').setDescription('The message').setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('poll')
+      .setDescription('Create a poll')
+      .addStringOption(option => option.setName('question').setDescription('The question').setRequired(true))
+      .addStringOption(option => option.setName('options').setDescription('Comma-separated options').setRequired(true)),
   ];
 
   const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
@@ -402,6 +481,45 @@ function generateMathQuestion() {
   return { question: `${num1} ${operator} ${num2} = ?`, answer };
 }
 
+// Command help data
+const commandHelp = [
+  { name: '/ping', description: 'Replies with Pong!' },
+  { name: '/help', description: 'Lists all commands' },
+  { name: '/invite', description: 'Gets invite link' },
+  { name: '/getserver info', description: 'Server info' },
+  { name: '/getserver icon', description: 'Server icon' },
+  { name: '/kick <user> [reason]', description: 'Kicks a user' },
+  { name: '/ban <user> [reason]', description: 'Bans a user' },
+  { name: '/warn <user> <reason>', description: 'Warns a user' },
+  { name: '/warnings <user>', description: 'Views warnings' },
+  { name: '/clearwarnings <user>', description: 'Clears warnings' },
+  { name: '/mute <user> [minutes] [hours] [days] [reason]', description: 'Mutes a user' },
+  { name: '/unmute <user>', description: 'Unmutes a user' },
+  { name: '/verify-setup <channel> [options]', description: 'Sets up verification' },
+  { name: '/verify-test', description: 'Tests verification' },
+  { name: '/verify-disable', description: 'Disables verification' },
+  { name: '/verification <type> <length>', description: 'Generates code' },
+  { name: '/verification2', description: 'Math verification' },
+  { name: '/cw <word>', description: 'Adds censored word' },
+  { name: '/ucw <word>', description: 'Removes censored word' },
+  { name: '/cwl', description: 'Lists censored words' },
+  { name: '/prefix add <prefix>', description: 'Adds prefix' },
+  { name: '/prefix remove <prefix>', description: 'Removes prefix' },
+  { name: '/prefix list', description: 'Lists prefixes' },
+  { name: '/prefix clear', description: 'Clears prefixes' },
+  { name: '/usage', description: 'Detailed command usage' },
+  { name: '/lock [channel]', description: 'Locks channel' },
+  { name: '/unlock [channel]', description: 'Unlocks channel' },
+  { name: '/uptime', description: 'Bot uptime' },
+  { name: '/dice [sides]', description: 'Rolls dice' },
+  { name: '/coin', description: 'Flips coin' },
+  { name: '/role <user> <role>', description: 'Assigns role' },
+  { name: '/audit [limit]', description: 'Views audit logs' },
+  { name: '/about', description: 'Bot info' },
+  { name: '/say <message>', description: 'Bot says message' },
+  { name: '/poll <question> <options>', description: 'Creates poll' },
+];
+
 client.on('guildMemberAdd', async (member) => {
   try {
     const guildId = member.guild.id;
@@ -436,6 +554,59 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot || !message.guild) return;
+
+  const guildId = message.guild.id;
+  const cfg = settingsStore[guildId] || {};
+
+  // Censor words
+  if (cfg.censoredWords && cfg.censoredWords.some(word => message.content.toLowerCase().includes(word.toLowerCase()))) {
+    try {
+      await message.delete();
+      await message.author.send(`Your message in ${message.guild.name} was deleted because it contained a censored word.`);
+    } catch (e) {
+      console.error(`Failed to delete censored message in guild ${guildId}:`, e);
+    }
+    return;
+  }
+
+  // Prefix commands
+  const prefixes = cfg.prefixes || [];
+  if (prefixes.length === 0) return;
+
+  const prefix = prefixes.find(p => message.content.startsWith(p));
+  if (!prefix) return;
+
+  const args = message.content.slice(prefix.length).trim().split(/ +/);
+  const commandName = args.shift().toLowerCase();
+
+  // Map prefix commands to slash equivalents or handle here
+  const commandsMap = {
+    ping: () => message.reply('Pong!'),
+    help: () => handleHelp(message),
+    // Add others as needed, or call the same functions as slash
+  };
+
+  if (commandsMap[commandName]) {
+    try {
+      await commandsMap[commandName]();
+    } catch (e) {
+      console.error(`Prefix command error: ${commandName}`, e);
+    }
+  }
+});
+
+// Function for help in prefix
+async function handleHelp(message) {
+  const embed = new EmbedBuilder()
+    .setTitle('Bot Commands')
+    .setDescription('Here are all available commands:')
+    .addFields(commandHelp.slice(0, 10).map(cmd => ({ name: cmd.name, value: cmd.description, inline: true })))
+    .setColor(Colors.Blue);
+  await message.reply({ embeds: [embed] });
+}
+
 client.on(Events.InteractionCreate, async (interaction) => {
   const interactionAge = Date.now() - interaction.createdTimestamp;
   try {
@@ -443,8 +614,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isChatInputCommand()) {
       const { commandName } = interaction;
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && !['ping', 'help', 'getserver', 'invite', 'verification', 'verification2'].includes(commandName)) {
-        return interaction.reply({ content: 'You need the Manage Guild permission to use this command.', flags: [MessageFlags.Ephemeral] });
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && !['ping', 'help', 'getserver', 'invite', 'verification', 'verification2', 'uptime', 'dice', 'coin', 'about', 'say', 'poll', 'usage'].includes(commandName)) {
+        return interaction.reply({ content: 'You need the Manage Guild permission to use this command.', ephemeral: true });
       }
 
       if (commandName === 'ping') {
@@ -465,27 +636,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const embed = new EmbedBuilder()
           .setTitle('Bot Commands')
           .setDescription('Here are all available commands:')
-          .addFields(
-            { name: '/ping', value: 'Check if the bot is alive', inline: true },
-            { name: '/help', value: 'Show this help message', inline: true },
-            { name: '/invite', value: 'Get the bot invite link', inline: true },
-            { name: '/getserver info', value: 'Display server information', inline: true },
-            { name: '/getserver icon', value: 'Get the server icon', inline: true },
-            { name: '/kick', value: 'Kick a user', inline: true },
-            { name: '/ban', value: 'Ban a user', inline: true },
-            { name: '/warn', value: 'Warn a user', inline: true },
-            { name: '/warnings', value: 'View user warnings', inline: true },
-            { name: '/clearwarnings', value: 'Clear user warnings', inline: true },
-            { name: '/mute', value: 'Mute a user for a time', inline: true },
-            { name: '/unmute', value: 'Unmute a user', inline: true },
-            { name: '/verify-setup', value: 'Setup the verification system', inline: true },
-            { name: '/verify-test', value: 'Send a test verification message', inline: true },
-            { name: '/verify-disable', value: 'Disable the verification system', inline: true },
-            { name: '/verification', value: 'Generate a verification code', inline: true },
-            { name: '/verification2', value: 'Answer a math question to verify', inline: true }
-          )
+          .addFields(commandHelp.map(cmd => ({ name: cmd.name, value: cmd.description, inline: true })))
           .setColor(Colors.Blue)
-          .setFooter({ text: 'Use /verify-setup to get started!' });
+          .setFooter({ text: 'Use /usage for detailed help!' });
         return interaction.reply({ embeds: [embed] });
       }
 
@@ -519,18 +672,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (commandName === 'kick') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
-          return interaction.reply({ content: 'You need the Kick Members permission to use this command.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You need the Kick Members permission to use this command.', ephemeral: true });
         }
         const user = interaction.options.getUser('user');
         const member = await interaction.guild.members.fetch(user.id).catch(() => null);
         if (!member) {
-          return interaction.reply({ content: 'User not found in the server.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'User not found in the server.', ephemeral: true });
         }
         if (member.id === interaction.user.id) {
-          return interaction.reply({ content: 'You cannot kick yourself.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You cannot kick yourself.', ephemeral: true });
         }
         if (member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
-          return interaction.reply({ content: 'You cannot kick another moderator.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You cannot kick another moderator.', ephemeral: true });
         }
         const reason = interaction.options.getString('reason') || 'No reason provided.';
         
@@ -542,13 +695,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: `Successfully kicked ${user.tag} from the server. Reason: ${reason}` });
         } catch (error) {
           console.error('Failed to kick member:', error);
-          return interaction.reply({ content: 'Failed to kick the user. Check bot permissions.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Failed to kick the user. Check bot permissions and role hierarchy.', ephemeral: true });
         }
       }
 
       if (commandName === 'ban') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.BanMembers)) {
-          return interaction.reply({ content: 'You need the Ban Members permission to use this command.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You need the Ban Members permission to use this command.', ephemeral: true });
         }
         const user = interaction.options.getUser('user');
         const reason = interaction.options.getString('reason') || 'No reason provided.';
@@ -561,26 +714,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: `Successfully banned ${user.tag} from the server. Reason: ${reason}` });
         } catch (error) {
           console.error('Failed to ban member:', error);
-          return interaction.reply({ content: 'Failed to ban the user. Check bot permissions.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Failed to ban the user. Check bot permissions and role hierarchy.', ephemeral: true });
         }
       }
 
       if (commandName === 'warn') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
         }
         const user = interaction.options.getUser('user');
         const reason = interaction.options.getString('reason');
         const member = await interaction.guild.members.fetch(user.id).catch(() => null);
         
         if (!member) {
-          return interaction.reply({ content: 'User not found in the server.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'User not found in the server.', ephemeral: true });
         }
         if (member.id === interaction.user.id) {
-          return interaction.reply({ content: 'You cannot warn yourself.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You cannot warn yourself.', ephemeral: true });
         }
         if (member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-          return interaction.reply({ content: 'You cannot warn another moderator.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You cannot warn another moderator.', ephemeral: true });
         }
 
         // Add warning to store
@@ -607,13 +760,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (commandName === 'warnings') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
         }
         const user = interaction.options.getUser('user');
         const warnings = getWarnings(interaction.guild.id, user.id);
         
         if (warnings.length === 0) {
-          return interaction.reply({ content: `${user.tag} has no warnings.`, flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: `${user.tag} has no warnings.`, ephemeral: true });
         }
         
         const embed = new EmbedBuilder()
@@ -635,42 +788,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (commandName === 'clearwarnings') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
         }
         const user = interaction.options.getUser('user');
         const cleared = clearWarnings(interaction.guild.id, user.id);
         
         if (cleared) {
-          return interaction.reply({ content: `Cleared all warnings for ${user.tag}.`, flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: `Cleared all warnings for ${user.tag}.`, ephemeral: true });
         } else {
-          return interaction.reply({ content: `${user.tag} has no warnings to clear.`, flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: `${user.tag} has no warnings to clear.`, ephemeral: true });
         }
       }
 
       if (commandName === 'mute') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
         }
         const targetUser = interaction.options.getUser('user');
         const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
         if (!targetMember) {
-          return interaction.reply({ content: 'User not found in the server.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'User not found in the server.', ephemeral: true });
         }
         if (targetMember.id === interaction.user.id) {
-          return interaction.reply({ content: 'You cannot mute yourself.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You cannot mute yourself.', ephemeral: true });
         }
         if (targetMember.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-          return interaction.reply({ content: 'You cannot mute another moderator.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You cannot mute another moderator.', ephemeral: true });
         }
         const minutes = interaction.options.getInteger('minutes') || 0;
         const hours = interaction.options.getInteger('hours') || 0;
         const days = interaction.options.getInteger('days') || 0;
         const totalMs = (days * 24 * 60 * 60 * 1000) + (hours * 60 * 60 * 1000) + (minutes * 60 * 1000);
         if (totalMs === 0) {
-          return interaction.reply({ content: 'You must specify at least one duration (minutes, hours, or days).', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You must specify at least one duration (minutes, hours, or days).', ephemeral: true });
         }
         if (totalMs > 28 * 24 * 60 * 60 * 1000) {
-          return interaction.reply({ content: 'Timeout duration cannot exceed 28 days.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Timeout duration cannot exceed 28 days.', ephemeral: true });
         }
         const reason = interaction.options.getString('reason') || 'No reason provided.';
         try {
@@ -678,35 +831,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: `Successfully muted ${targetUser.tag} for ${days} days, ${hours} hours, and ${minutes} minutes. Reason: ${reason}` });
         } catch (error) {
           console.error('Failed to mute member:', error);
-          return interaction.reply({ content: 'Failed to mute the user. Check bot permissions.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Failed to mute the user. Check bot permissions and role hierarchy (bot role must be above target\'s).', ephemeral: true });
         }
       }
 
       if (commandName === 'unmute') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
         }
         const user = interaction.options.getUser('user');
         const member = await interaction.guild.members.fetch(user.id).catch(() => null);
         if (!member) {
-          return interaction.reply({ content: 'User not found in the server.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'User not found in the server.', ephemeral: true });
         }
         if (!member.isCommunicationDisabled()) {
-          return interaction.reply({ content: 'This user is not currently muted.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'This user is not currently muted.', ephemeral: true });
         }
         try {
-          await member.timeout(0);
+          await member.timeout(null, 'Unmuted');
           return interaction.reply({ content: `Successfully unmuted ${user.tag}.` });
         } catch (error) {
           console.error('Failed to unmute member:', error);
-          return interaction.reply({ content: 'Failed to unmute the user. Check bot permissions.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Failed to unmute the user. Check bot permissions and role hierarchy (bot role must be above target\'s).', ephemeral: true });
         }
       }
 
       if (commandName === 'verify-setup') {
         const channel = interaction.options.getChannel('channel');
         if (!channel.isTextBased()) {
-          return interaction.reply({ content: 'The selected channel must be a text-based channel.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'The selected channel must be a text-based channel.', ephemeral: true });
         }
 
         const prompt = interaction.options.getString('prompt') || 'Click Verify to start. You will receive a captcha to solve.';
@@ -721,7 +874,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
         if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
-          return interaction.reply({ content: 'Bot lacks necessary permissions in the selected channel.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Bot lacks necessary permissions in the selected channel.', ephemeral: true });
         }
 
         settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
@@ -769,23 +922,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
         settingsStore[interaction.guild.id].verify.lastSent = Date.now();
         saveSettings();
 
-        return interaction.reply({ content: `Verification setup complete! Message sent to ${channel}.`, flags: [MessageFlags.Ephemeral] });
+        return interaction.reply({ content: `Verification setup complete! Message sent to ${channel}.`, ephemeral: true });
       }
 
       if (commandName === 'verify-test') {
         const cfg = settingsStore[interaction.guild.id]?.verify;
         if (!cfg || !cfg.enabled || !cfg.channelId) {
-          return interaction.reply({ content: 'Verification is not set up. Use /verify-setup first.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Verification is not set up. Use /verify-setup first.', ephemeral: true });
         }
 
         const channel = await interaction.guild.channels.fetch(cfg.channelId).catch(() => null);
         if (!channel || !channel.isTextBased()) {
-          return interaction.reply({ content: 'Verification channel is invalid.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Verification channel is invalid.', ephemeral: true });
         }
 
         const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
         if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
-          return interaction.reply({ content: 'Bot lacks necessary permissions in the verification channel.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Bot lacks necessary permissions in the verification channel.', ephemeral: true });
         }
 
         const prompt = cfg.prompt || 'Click Verify to start. You will receive a captcha to solve.';
@@ -810,13 +963,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           components: [row]
         });
 
-        return interaction.reply({ content: `Test verification message sent to ${channel}!`, flags: [MessageFlags.Ephemeral] });
+        return interaction.reply({ content: `Test verification message sent to ${channel}!`, ephemeral: true });
       }
 
       if (commandName === 'verify-disable') {
         const cfg = settingsStore[interaction.guild.id]?.verify;
         if (!cfg || !cfg.enabled) {
-          return interaction.reply({ content: 'Verification is already disabled.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Verification is already disabled.', ephemeral: true });
         }
 
         if (cfg.messageId && cfg.channelId) {
@@ -834,7 +987,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         delete settingsStore[interaction.guild.id].verify.messageId;
         saveSettings();
 
-        return interaction.reply({ content: 'Verification disabled and message deleted.', flags: [MessageFlags.Ephemeral] });
+        return interaction.reply({ content: 'Verification disabled and message deleted.', ephemeral: true });
       }
 
       if (commandName === 'verification') {
@@ -846,7 +999,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setDescription(`Your verification code is: **${code}**\n\nPlease use this code to verify your identity.`)
           .setColor(Colors.Blue)
           .setFooter({ text: 'This code is for testing purposes.' });
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
       if (commandName === 'verification2') {
@@ -871,15 +1024,277 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.showModal(modal);
         } catch (e) {
           console.error(`Failed to show math modal for user ${interaction.user.id}:`, e);
-          return interaction.reply({ content: 'Failed to show math question. Please try again.', flags: [MessageFlags.Ephemeral] });
+          return interaction.reply({ content: 'Failed to show math question. Please try again.', ephemeral: true });
         }
       }
+
+      if (commandName === 'cw') {
+        const word = interaction.options.getString('word');
+        settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
+        settingsStore[interaction.guild.id].censoredWords = settingsStore[interaction.guild.id].censoredWords || [];
+        if (!settingsStore[interaction.guild.id].censoredWords.includes(word)) {
+          settingsStore[interaction.guild.id].censoredWords.push(word);
+          saveSettings();
+          return interaction.reply({ content: `Added "${word}" to censored words.`, ephemeral: true });
+        } else {
+          return interaction.reply({ content: `"${word}" is already censored.`, ephemeral: true });
+        }
+      }
+
+      if (commandName === 'ucw') {
+        const word = interaction.options.getString('word');
+        settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
+        settingsStore[interaction.guild.id].censoredWords = settingsStore[interaction.guild.id].censoredWords || [];
+        const index = settingsStore[interaction.guild.id].censoredWords.indexOf(word);
+        if (index !== -1) {
+          settingsStore[interaction.guild.id].censoredWords.splice(index, 1);
+          saveSettings();
+          return interaction.reply({ content: `Removed "${word}" from censored words.`, ephemeral: true });
+        } else {
+          return interaction.reply({ content: `"${word}" is not censored.`, ephemeral: true });
+        }
+      }
+
+      if (commandName === 'cwl') {
+        settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
+        const words = settingsStore[interaction.guild.id].censoredWords || [];
+        if (words.length === 0) {
+          return interaction.reply({ content: 'No censored words.', ephemeral: true });
+        }
+        const embed = new EmbedBuilder()
+          .setTitle('Censored Words')
+          .setDescription(words.join(', '))
+          .setColor(Colors.Red);
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+
+      if (commandName === 'prefix') {
+        const subcommand = interaction.options.getSubcommand();
+        settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
+        settingsStore[interaction.guild.id].prefixes = settingsStore[interaction.guild.id].prefixes || [];
+
+        if (subcommand === 'add') {
+          const prefix = interaction.options.getString('prefix');
+          if (!settingsStore[interaction.guild.id].prefixes.includes(prefix)) {
+            settingsStore[interaction.guild.id].prefixes.push(prefix);
+            saveSettings();
+            return interaction.reply({ content: `Added prefix "${prefix}".`, ephemeral: true });
+          } else {
+            return interaction.reply({ content: `Prefix "${prefix}" already exists.`, ephemeral: true });
+          }
+        } else if (subcommand === 'remove') {
+          const prefix = interaction.options.getString('prefix');
+          const index = settingsStore[interaction.guild.id].prefixes.indexOf(prefix);
+          if (index !== -1) {
+            settingsStore[interaction.guild.id].prefixes.splice(index, 1);
+            saveSettings();
+            return interaction.reply({ content: `Removed prefix "${prefix}".`, ephemeral: true });
+          } else {
+            return interaction.reply({ content: `Prefix "${prefix}" not found.`, ephemeral: true });
+          }
+        } else if (subcommand === 'list') {
+          const prefixes = settingsStore[interaction.guild.id].prefixes;
+          if (prefixes.length === 0) {
+            return interaction.reply({ content: 'No prefixes set.', ephemeral: true });
+          }
+          const embed = new EmbedBuilder()
+            .setTitle('Prefixes')
+            .setDescription(prefixes.join(', '))
+            .setColor(Colors.Blue);
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        } else if (subcommand === 'clear') {
+          settingsStore[interaction.guild.id].prefixes = [];
+          saveSettings();
+          return interaction.reply({ content: 'Cleared all prefixes.', ephemeral: true });
+        }
+      }
+
+      if (commandName === 'usage') {
+        let page = 0;
+        const perPage = 5;
+        const totalPages = Math.ceil(commandHelp.length / perPage);
+
+        const embed = new EmbedBuilder()
+          .setTitle('Command Usage')
+          .setColor(Colors.Green)
+          .setFooter({ text: `Page 1/${totalPages}` });
+
+        const updateEmbed = () => {
+          embed.setDescription('');
+          const start = page * perPage;
+          const end = start + perPage;
+          commandHelp.slice(start, end).forEach(cmd => {
+            embed.addFields({ name: cmd.name, value: cmd.description, inline: false });
+          });
+          embed.setFooter({ text: `Page ${page + 1}/${totalPages}` });
+        };
+
+        updateEmbed();
+
+        const row = new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder().setCustomId('prev_usage').setLabel('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+            new ButtonBuilder().setCustomId('next_usage').setLabel('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page === totalPages - 1)
+          );
+
+        const msg = await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+
+        const collector = msg.createMessageComponentCollector({ time: 60000 });
+
+        collector.on('collect', async (i) => {
+          if (i.user.id !== interaction.user.id) return;
+          if (i.customId === 'prev_usage') page--;
+          if (i.customId === 'next_usage') page++;
+          updateEmbed();
+          await i.update({ embeds: [embed], components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('prev_usage').setLabel('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+            new ButtonBuilder().setCustomId('next_usage').setLabel('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page === totalPages - 1)
+          )] });
+        });
+
+        collector.on('end', () => {
+          msg.edit({ components: [] }).catch(() => {});
+        });
+      }
+
+      if (commandName === 'lock') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
+          return interaction.reply({ content: 'You need Manage Channels permission.', ephemeral: true });
+        }
+        let channel = interaction.options.getChannel('channel') || interaction.channel;
+        if (channel.type !== ChannelType.GuildText) {
+          return interaction.reply({ content: 'Must be a text channel.', ephemeral: true });
+        }
+        try {
+          await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
+            SendMessages: false,
+            AttachFiles: false
+          });
+          await channel.send('# CHANNEL LOCK');
+          return interaction.reply({ content: `Locked ${channel}.`, ephemeral: true });
+        } catch (e) {
+          console.error('Failed to lock channel:', e);
+          return interaction.reply({ content: 'Failed to lock channel. Check permissions.', ephemeral: true });
+        }
+      }
+
+      if (commandName === 'unlock') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
+          return interaction.reply({ content: 'You need Manage Channels permission.', ephemeral: true });
+        }
+        let channel = interaction.options.getChannel('channel') || interaction.channel;
+        if (channel.type !== ChannelType.GuildText) {
+          return interaction.reply({ content: 'Must be a text channel.', ephemeral: true });
+        }
+        try {
+          await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
+            SendMessages: null,
+            AttachFiles: null
+          });
+          await channel.send('# CHANNEL UNLOCK');
+          return interaction.reply({ content: `Unlocked ${channel}.`, ephemeral: true });
+        } catch (e) {
+          console.error('Failed to unlock channel:', e);
+          return interaction.reply({ content: 'Failed to unlock channel. Check permissions.', ephemeral: true });
+        }
+      }
+
+      if (commandName === 'uptime') {
+        const uptime = client.uptime;
+        const days = Math.floor(uptime / 86400000);
+        const hours = Math.floor(uptime / 3600000) % 24;
+        const minutes = Math.floor(uptime / 60000) % 60;
+        const seconds = Math.floor(uptime / 1000) % 60;
+        return interaction.reply(`Uptime: ${days}d ${hours}h ${minutes}m ${seconds}s`);
+      }
+
+      if (commandName === 'dice') {
+        const sides = interaction.options.getInteger('sides') || 6;
+        const roll = Math.floor(Math.random() * sides) + 1;
+        return interaction.reply(`You rolled a ${roll}! (1-${sides})`);
+      }
+
+      if (commandName === 'coin') {
+        const result = Math.random() < 0.5 ? 'Heads' : 'Tails';
+        return interaction.reply(`The coin landed on ${result}!`);
+      }
+
+      if (commandName === 'role') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+          return interaction.reply({ content: 'You need Manage Roles permission.', ephemeral: true });
+        }
+        const user = interaction.options.getUser('user');
+        const role = interaction.options.getRole('role');
+        const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+        if (!member) {
+          return interaction.reply({ content: 'User not found.', ephemeral: true });
+        }
+        try {
+          await member.roles.add(role);
+          return interaction.reply({ content: `Assigned ${role.name} to ${user.tag}.` });
+        } catch (e) {
+          console.error('Failed to assign role:', e);
+          return interaction.reply({ content: 'Failed to assign role. Check hierarchy.', ephemeral: true });
+        }
+      }
+
+      if (commandName === 'audit') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.ViewAuditLog)) {
+          return interaction.reply({ content: 'You need View Audit Log permission.', ephemeral: true });
+        }
+        const limit = interaction.options.getInteger('limit') || 10;
+        const logs = await interaction.guild.fetchAuditLogs({ limit });
+        const embed = new EmbedBuilder()
+          .setTitle('Audit Logs')
+          .setColor(Colors.Purple);
+        logs.entries.forEach((entry) => {
+          embed.addFields({
+            name: `${entry.action} by ${entry.executor.tag}`,
+            value: `Target: ${entry.target?.tag || 'N/A'}\nReason: ${entry.reason || 'N/A'}\nTime: <t:${Math.floor(entry.createdTimestamp / 1000)}:R>`,
+            inline: false
+          });
+        });
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+
+      if (commandName === 'about') {
+        const embed = new EmbedBuilder()
+          .setTitle('About the Bot')
+          .setDescription(`**Aurox Bot**\n\n### Features\n- Moderation tools\n- Verification system\n- Fun commands\n\n*Made by aurox.x*\n\n__Support__: [Discord](https://discord.gg/zYfhKn5wbm)`)
+          .setColor(Colors.Gold);
+        return interaction.reply({ embeds: [embed] });
+      }
+
+      if (commandName === 'say') {
+        const msg = interaction.options.getString('message');
+        await interaction.channel.send(msg);
+        return interaction.reply({ content: 'Message sent.', ephemeral: true });
+      }
+
+      if (commandName === 'poll') {
+        const question = interaction.options.getString('question');
+        const optionsStr = interaction.options.getString('options');
+        const options = optionsStr.split(',').map(o => o.trim());
+        const embed = new EmbedBuilder()
+          .setTitle('Poll: ' + question)
+          .setDescription(options.map((o, i) => `${i+1}. ${o}`).join('\n'))
+          .setColor(Colors.Green);
+        const pollMsg = await interaction.reply({ embeds: [embed], fetchReply: true });
+        for (let i = 1; i <= options.length; i++) {
+          await pollMsg.react(`${i}️⃣`);
+        }
+      }
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('prev_usage') || interaction.customId.startsWith('next_usage')) {
+      // Handled in collector
+      return;
     }
 
     if (interaction.isButton() && interactionAge > 15000) {
       console.warn(`Interaction expired: type=${interaction.type}, customId=${interaction.customId}, user=${interaction.user.id}, age=${interactionAge}ms`);
       if (interaction.isRepliable()) {
-        await interaction.reply({ content: 'This interaction has expired. Please click Verify again.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'This interaction has expired. Please click Verify again.', ephemeral: true });
       }
       return;
     }
@@ -889,21 +1304,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const cfg = settingsStore[guildId];
       if (!cfg || !cfg.verify || !cfg.verify.enabled || !cfg.verify.channelId) {
         console.warn(`Verification not configured or disabled for guild ${guildId}`);
-        await interaction.reply({ content: 'Verification is not enabled for this server. Contact an admin.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'Verification is not enabled for this server. Contact an admin.', ephemeral: true });
         return;
       }
 
       const channel = await interaction.guild.channels.fetch(cfg.verify.channelId).catch(() => null);
       if (!channel || !channel.isTextBased()) {
         console.warn(`Verify channel ${cfg.verify.channelId} invalid for guild ${guildId}`);
-        await interaction.reply({ content: 'Verification channel is invalid. Contact an admin.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'Verification channel is invalid. Contact an admin.', ephemeral: true });
         return;
       }
 
       const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
       if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.EmbedLinks])) {
         console.warn(`Bot lacks ViewChannel, SendMessages, or EmbedLinks permissions in channel ${cfg.verify.channelId} for guild ${guildId}`);
-        await interaction.reply({ content: 'Bot lacks permissions to send messages in the verification channel.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'Bot lacks permissions to send messages in the verification channel.', ephemeral: true });
         return;
       }
 
@@ -914,7 +1329,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         ({ buffer, text } = await createCaptchaImage({ text: answer, avatarURL }));
       } catch (e) {
         console.error(`Failed to generate captcha for ${guildId}:${interaction.user.id}:`, e);
-        await interaction.reply({ content: 'Failed to generate captcha. Please try again.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'Failed to generate captcha. Please try again.', ephemeral: true });
         return;
       }
 
@@ -933,7 +1348,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         content: 'Solve the captcha shown below and click *Enter solution* to type your answer.',
         files: [attachment],
         components: [row],
-        flags: [MessageFlags.Ephemeral]
+        ephemeral: true
       });
       console.log(`Sent captcha response to user ${interaction.user.id} in guild ${guildId}`);
       return;
@@ -942,7 +1357,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('modal_')) {
       const userId = interaction.customId.split('_')[1];
       if (userId !== interaction.user.id) {
-        await interaction.reply({ content: 'This modal is not for you.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'This modal is not for you.', ephemeral: true });
         return;
       }
       const rawAnswer = interaction.fields.getTextInputValue('captcha_answer');
@@ -952,13 +1367,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const stored = captchaMap.get(key);
       if (!stored) {
         console.warn(`No captcha found for ${key}`);
-        await interaction.reply({ content: 'No captcha found or it expired. Please click Verify again.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'No captcha found or it expired. Please click Verify again.', ephemeral: true });
         return;
       }
       if (Date.now() > stored.expires) {
         console.warn(`Captcha expired for ${key}`);
         captchaMap.delete(key);
-        await interaction.reply({ content: 'Captcha expired. Please click Verify again.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'Captcha expired. Please click Verify again.', ephemeral: true });
         return;
       }
 
@@ -971,14 +1386,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
         if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
           console.error(`Bot lacks ManageRoles permission in guild ${interaction.guildId}`);
-          await interaction.reply({ content: 'Bot lacks permission to manage roles. Contact an admin.', flags: [MessageFlags.Ephemeral] });
+          await interaction.reply({ content: 'Bot lacks permission to manage roles. Contact an admin.', ephemeral: true });
           return;
         }
 
         const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
         if (!member) {
           console.error(`Member ${interaction.user.id} not found in guild ${interaction.guildId}`);
-          await interaction.reply({ content: 'Member not found in guild.', flags: [MessageFlags.Ephemeral] });
+          await interaction.reply({ content: 'Member not found in guild.', ephemeral: true });
           return;
         }
 
@@ -1009,11 +1424,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         captchaMap.delete(key);
-        await interaction.reply({ content: '✅ Verified! Roles have been updated.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: '✅ Verified! Roles have been updated.', ephemeral: true });
         console.log(`User ${interaction.user.id} verified in guild ${interaction.guildId}`);
       } else {
         captchaMap.delete(key);
-        await interaction.reply({ content: '❌ Wrong answer. Click **Verify** again to get a new captcha.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: '❌ Wrong answer. Click **Verify** again to get a new captcha.', ephemeral: true });
         console.log(`User ${interaction.user.id} failed captcha in guild ${interaction.guildId}: expected ${stored.answer}, got ${answer}`);
       }
       return;
@@ -1022,7 +1437,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('math_modal_')) {
       const userId = interaction.customId.split('_')[2];
       if (userId !== interaction.user.id) {
-        await interaction.reply({ content: 'This modal is not for you.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'This modal is not for you.', ephemeral: true });
         return;
       }
       const answer = interaction.fields.getTextInputValue('math_answer');
@@ -1030,23 +1445,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const stored = captchaMap.get(key);
       if (!stored) {
         console.warn(`No math question found for ${key}`);
-        await interaction.reply({ content: 'No math question found or it expired. Use /verification2 again.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'No math question found or it expired. Use /verification2 again.', ephemeral: true });
         return;
       }
       if (Date.now() > stored.expires) {
         console.warn(`Math question expired for ${key}`);
         captchaMap.delete(key);
-        await interaction.reply({ content: 'Math question expired. Use /verification2 again.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'Math question expired. Use /verification2 again.', ephemeral: true });
         return;
       }
 
       if (parseInt(answer) === stored.answer) {
         captchaMap.delete(key);
-        await interaction.reply({ content: '✅ Correct! You passed the math verification.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: '✅ Correct! You passed the math verification.', ephemeral: true });
         console.log(`User ${interaction.user.id} passed math verification in guild ${interaction.guildId}`);
       } else {
         captchaMap.delete(key);
-        await interaction.reply({ content: '❌ Wrong answer. Use /verification2 to try again.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: '❌ Wrong answer. Use /verification2 to try again.', ephemeral: true });
         console.log(`User ${interaction.user.id} failed math verification in guild ${interaction.guildId}: expected ${stored.answer}, got ${answer}`);
       }
       return;
@@ -1055,12 +1470,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('enter_')) {
       const userId = interaction.customId.split('_')[1];
       if (userId !== interaction.user.id) {
-        await interaction.reply({ content: 'This enter button is not for you.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: 'This enter button is not for you.', ephemeral: true });
         return;
       }
       if (!interaction.isRepliable()) {
         console.warn(`Cannot show modal: Interaction not repliable for user ${interaction.user.id}, customId=${interaction.customId}, token=${interaction.token.slice(0, 10)}..., age=${interactionAge}ms`);
-        await interaction.followUp({ content: 'Unable to show captcha modal. Please try again.', flags: [MessageFlags.Ephemeral] });
+        await interaction.followUp({ content: 'Unable to show captcha modal. Please try again.', ephemeral: true });
         return;
       }
       const modal = new ModalBuilder()
@@ -1085,7 +1500,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           console.error(`Attempt ${3 - attempts}/2: Failed to show modal for user ${interaction.user.id} in guild ${interaction.guildId}: ${e.message} (code: ${e.code || 'unknown'})`);
           attempts--;
           if (attempts === 0) {
-            await interaction.reply({ content: 'Failed to show captcha modal after retries. Please try again.', flags: [MessageFlags.Ephemeral] });
+            await interaction.reply({ content: 'Failed to show captcha modal after retries. Please try again.', ephemeral: true });
             return;
           }
           await new Promise(resolve => setTimeout(resolve, 1000));
@@ -1095,7 +1510,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   } catch (err) {
     console.error(`Interaction handler error for type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}, token=${interaction.token?.slice(0, 10) || 'none'}..., age=${interactionAge}ms: ${err.message} (code: ${err.code || 'unknown'})`);
     if (interaction && !interaction.replied && !interaction.deferred) {
-      try { await interaction.reply({ content: 'An error occurred. Please try again.', flags: [MessageFlags.Ephemeral] }); } catch (e) {}
+      try { await interaction.reply({ content: 'An error occurred. Please try again.', ephemeral: true }); } catch (e) {}
     }
   }
 });
