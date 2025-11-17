@@ -6,29 +6,23 @@ const session = require('express-session');
 const axios = require('axios');
 const { createCanvas, loadImage } = require('canvas');
 const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, AttachmentBuilder, Events, PermissionsBitField, EmbedBuilder, REST, Routes, SlashCommandBuilder, Colors, ChannelType } = require('discord.js');
-
 const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'change_this_secret';
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const REDIRECT_URI = process.env.REDIRECT_URI || `http://localhost:${PORT}/callback`;
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
-
 if (!CLIENT_ID || !CLIENT_SECRET || !BOT_TOKEN) {
   console.error('Please set DISCORD_TOKEN, CLIENT_ID, and CLIENT_SECRET in .env');
   process.exit(1);
 }
-
 const allowedUserIds = ['817621670461702155', '1243809777604235309', '1414468530555981955'];
-
 const DATA_DIR = path.resolve(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const WARNINGS_FILE = path.join(DATA_DIR, 'warnings.json');
-
 let settingsStore = {};
 let warnStore = {};
-
 try {
   settingsStore = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8') || '{}');
   for (const guildId in settingsStore) {
@@ -37,18 +31,21 @@ try {
       delete settingsStore[guildId].verify;
     }
   }
+  for (const guildId in settingsStore) {
+    if (!settingsStore[guildId].antiraid) {
+      settingsStore[guildId].antiraid = { enabled: false, messageLimit: 5, timeWindow: 10000 }; 
+    }
+  }
 } catch (e) {
   console.error('Failed to load settings.json:', e);
   settingsStore = {};
 }
-
 try {
   warnStore = JSON.parse(fs.readFileSync(WARNINGS_FILE, 'utf8') || '{}');
 } catch (e) {
   console.error('Failed to load warnings.json:', e);
   warnStore = {};
 }
-
 function saveSettings() {
   try {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settingsStore, null, 2));
@@ -56,7 +53,6 @@ function saveSettings() {
     console.error('Failed to save settings:', e);
   }
 }
-
 function saveWarnings() {
   try {
     fs.writeFileSync(WARNINGS_FILE, JSON.stringify(warnStore, null, 2));
@@ -64,17 +60,14 @@ function saveWarnings() {
     console.error('Failed to save warnings:', e);
   }
 }
-
 const captchaMap = new Map();
-
+const spamTracker = new Map(); // guildId => Map<userId, number[]> (timestamps)
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages],
   partials: [Partials.Channel, Partials.Message]
 });
-
 client.once(Events.ClientReady, async () => {
   console.log('Bot ready as', client.user.tag);
-
   const commands = [
     new SlashCommandBuilder()
       .setName('ping')
@@ -153,7 +146,7 @@ client.once(Events.ClientReady, async () => {
     new SlashCommandBuilder()
       .setName('verification')
       .setDescription('Generate a verification code')
-      .addStringOption(option => 
+      .addStringOption(option =>
         option.setName('type')
           .setDescription('Type of verification code')
           .setRequired(true)
@@ -162,7 +155,7 @@ client.once(Events.ClientReady, async () => {
             { name: 'Alphabetic', value: 'alphabetic' },
             { name: 'Mixed', value: 'mixed' }
           ))
-      .addIntegerOption(option => 
+      .addIntegerOption(option =>
         option.setName('length')
           .setDescription('Length of the code (4-10)')
           .setRequired(true)
@@ -210,7 +203,7 @@ client.once(Events.ClientReady, async () => {
     new SlashCommandBuilder()
       .setName('usage')
       .setDescription('Detailed usage for commands')
-      .addStringOption(option => 
+      .addStringOption(option =>
         option.setName('command')
           .setDescription('Specific command to get usage for')
           .setRequired(false)),
@@ -253,10 +246,21 @@ client.once(Events.ClientReady, async () => {
       .setDescription('Create a poll')
       .addStringOption(option => option.setName('question').setDescription('The question').setRequired(true))
       .addStringOption(option => option.setName('options').setDescription('Comma-separated options').setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('antiraid')
+      .setDescription('Manage anti-raid (anti-spam) protection')
+      .addSubcommand(subcommand =>
+        subcommand
+          .setName('enable')
+          .setDescription('Enable anti-raid')
+      )
+      .addSubcommand(subcommand =>
+        subcommand
+          .setName('disable')
+          .setDescription('Disable anti-raid')
+      ),
   ];
-
   const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
-
   for (const guild of client.guilds.cache.values()) {
     try {
       await rest.put(
@@ -268,7 +272,6 @@ client.once(Events.ClientReady, async () => {
       console.error(`Failed to register commands for guild ${guild.id}:`, error);
     }
   }
-
   for (const guild of client.guilds.cache.values()) {
     const guildId = guild.id;
     const cfg = settingsStore[guildId];
@@ -276,30 +279,24 @@ client.once(Events.ClientReady, async () => {
       console.log(`Skipping guild ${guildId}: Verification not enabled or channel not set`);
       continue;
     }
-
     const channel = await guild.channels.fetch(cfg.verify.channelId).catch(() => null);
     if (!channel?.isTextBased()) {
       console.warn(`Verify channel ${cfg.verify.channelId} invalid or not text-based for guild ${guildId}`);
       continue;
     }
-
     const messageId = cfg.verify.messageId;
     let message = messageId
       ? await channel.messages.fetch({ message: messageId, cache: false }).catch(() => null)
       : null;
-
     if (message) {
       console.log(`Found existing verification message for guild ${guildId}, message ID: ${message.id}`);
       continue;
     }
-
     const lastSent = cfg.verify.lastSent || 0;
-
     if (Date.now() - lastSent < 1000 * 60 * 60 * 24 * 10) {
       console.log(`Skipping sending verification for guild ${guildId}: recently sent`);
       continue;
     }
-
     const prompt = cfg.verify.prompt || 'Click Verify to start. You will receive a captcha to solve.';
     const ping = cfg.verify.ping || '';
     const embedTitle = cfg.verify.embedTitle || 'VERIFICATION SECTION';
@@ -314,11 +311,9 @@ client.once(Events.ClientReady, async () => {
       .setTitle(embedTitle)
       .setDescription(prompt)
       .setColor(embedColor);
-
     if (gifURL) {
       embed.setImage(gifURL);
     }
-
     try {
       message = await channel.send({
         content: ping,
@@ -334,7 +329,6 @@ client.once(Events.ClientReady, async () => {
     }
   }
 });
-
 // Helper function to send DM to user
 async function sendUserDM(user, guild, action, reason) {
   try {
@@ -344,7 +338,6 @@ async function sendUserDM(user, guild, action, reason) {
       .setColor(action === 'warned' ? Colors.Yellow : action === 'kicked' ? Colors.Orange : Colors.Red)
       .setTimestamp()
       .setFooter({ text: `Server: ${guild.name}` });
-
     await user.send({ embeds: [embed] });
     return true;
   } catch (error) {
@@ -352,28 +345,25 @@ async function sendUserDM(user, guild, action, reason) {
     return false;
   }
 }
-
 // Warning system functions
 function addWarning(guildId, userId, reason, moderatorId) {
   if (!warnStore[guildId]) warnStore[guildId] = {};
   if (!warnStore[guildId][userId]) warnStore[guildId][userId] = [];
-  
+ 
   const warning = {
     id: Date.now().toString(),
     reason,
     moderatorId,
     timestamp: Date.now()
   };
-  
+ 
   warnStore[guildId][userId].push(warning);
   saveWarnings();
   return warning;
 }
-
 function getWarnings(guildId, userId) {
   return warnStore[guildId]?.[userId] || [];
 }
-
 function clearWarnings(guildId, userId) {
   if (warnStore[guildId]?.[userId]) {
     delete warnStore[guildId][userId];
@@ -382,7 +372,6 @@ function clearWarnings(guildId, userId) {
   }
   return false;
 }
-
 function randomText(len = 4, type = 'mixed') {
   let chars;
   if (type === 'numeric') {
@@ -396,17 +385,14 @@ function randomText(len = 4, type = 'mixed') {
   for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
 }
-
 async function createCaptchaImage({ text, avatarURL }) {
   try {
     const width = 500;
     const height = 200;
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
-
     ctx.fillStyle = '#0B1B2A';
     ctx.fillRect(0, 0, width, height);
-
     for (let i = 0; i < 6; i++) {
       ctx.strokeStyle = `rgba(${Math.floor(Math.random()*120+50)},${Math.floor(Math.random()*120+50)},${Math.floor(Math.random()*120+50)},0.25)`;
       ctx.beginPath();
@@ -414,7 +400,6 @@ async function createCaptchaImage({ text, avatarURL }) {
       ctx.lineTo(Math.random()*width, Math.random()*height);
       ctx.stroke();
     }
-
     if (avatarURL) {
       try {
         const avatarBuf = await axios.get(avatarURL, { responseType: 'arraybuffer', timeout: 5000 }).then(r => r.data);
@@ -438,7 +423,6 @@ async function createCaptchaImage({ text, avatarURL }) {
         console.warn('Avatar load failed:', e?.message || e);
       }
     }
-
     const startX = 200;
     const baseY = height / 2 + 12;
     for (let i = 0; i < text.length; i++) {
@@ -454,14 +438,12 @@ async function createCaptchaImage({ text, avatarURL }) {
       ctx.fillText(ch, 0, 0);
       ctx.restore();
     }
-
     for (let i = 0; i < 60; i++) {
       ctx.fillStyle = `rgba(255,255,255,${Math.random()*0.08})`;
       ctx.beginPath();
       ctx.arc(Math.random()*width, Math.random()*height, Math.random()*2+0.5, 0, Math.PI*2);
       ctx.fill();
     }
-
     const buffer = canvas.toBuffer('image/png');
     return { buffer, text };
   } catch (e) {
@@ -469,7 +451,6 @@ async function createCaptchaImage({ text, avatarURL }) {
     throw new Error('Captcha generation failed');
   }
 }
-
 function generateMathQuestion() {
   const num1 = Math.floor(Math.random() * 20) + 1;
   const num2 = Math.floor(Math.random() * 20) + 1;
@@ -483,7 +464,6 @@ function generateMathQuestion() {
   }
   return { question: `${num1} ${operator} ${num2} = ?`, answer };
 }
-
 // Command help data with detailed usage
 const commandHelp = [
   { name: '/ping', description: 'Replies with Pong!', usage: 'Use `/ping` to check if the bot is responsive.' },
@@ -521,8 +501,9 @@ const commandHelp = [
   { name: '/about', description: 'Bot info', usage: 'Use `/about` to see information about the bot.' },
   { name: '/say <message>', description: 'Bot says message', usage: 'Use `/say <message>` to make the bot send a message. Example: `/say Hello world!`.' },
   { name: '/poll <question> <options>', description: 'Creates poll', usage: 'Use `/poll <question> <options>` to create a poll. Options are comma-separated. Example: `/poll Favorite color? Red,Blue,Green`.' },
+  { name: '/antiraid enable', description: 'Enables anti-raid', usage: 'Use `/antiraid enable` to turn on spam detection (auto-delete and kick). Requires Administrator permission.' },
+  { name: '/antiraid disable', description: 'Disables anti-raid', usage: 'Use `/antiraid disable` to turn off spam detection. Requires Administrator permission.' },
 ];
-
 client.on('guildMemberAdd', async (member) => {
   try {
     const guildId = member.guild.id;
@@ -531,13 +512,11 @@ client.on('guildMemberAdd', async (member) => {
       console.log(`No verification configured for guild ${guildId}`);
       return;
     }
-
     const botMember = await member.guild.members.fetch(client.user.id).catch(() => null);
     if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
       console.warn(`Bot lacks ManageRoles permission in guild ${guildId}`);
       return;
     }
-
     const rolesOnJoin = Array.isArray(cfg.verify.rolesOnJoin) ? cfg.verify.rolesOnJoin : [];
     for (const r of rolesOnJoin) {
       try {
@@ -556,13 +535,10 @@ client.on('guildMemberAdd', async (member) => {
     console.error('Error on guildMemberAdd:', err);
   }
 });
-
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || !message.guild) return;
-
   const guildId = message.guild.id;
   const cfg = settingsStore[guildId] || {};
-
   // Censor words
   if (cfg.censoredWords && cfg.censoredWords.some(word => message.content.toLowerCase().includes(word.toLowerCase()))) {
     try {
@@ -573,17 +549,45 @@ client.on(Events.MessageCreate, async (message) => {
     }
     return;
   }
-
+  // Anti-raid spam detection
+  if (cfg.antiraid?.enabled) {
+    if (!spamTracker.has(guildId)) spamTracker.set(guildId, new Map());
+    const userTracker = spamTracker.get(guildId);
+    const userId = message.author.id;
+    if (!userTracker.has(userId)) userTracker.set(userId, []);
+    const timestamps = userTracker.get(userId);
+    const now = Date.now();
+    timestamps.push(now);
+    // Remove old timestamps
+    while (timestamps.length && timestamps[0] < now - cfg.antiraid.timeWindow) {
+      timestamps.shift();
+    }
+    if (timestamps.length > cfg.antiraid.messageLimit) {
+      // Spam detected: delete recent messages in this channel and kick
+      try {
+        await message.delete();
+        const messagesToDelete = await message.channel.messages.fetch({ limit: 100 });
+        const spamMsgs = messagesToDelete.filter(m => m.author.id === userId && m.createdTimestamp > now - cfg.antiraid.timeWindow);
+        if (spamMsgs.size > 0) {
+          await message.channel.bulkDelete(spamMsgs);
+        }
+        const member = await message.guild.members.fetch(userId).catch(() => null);
+        if (member && member.kickable) {
+          await member.kick('Spamming detected by anti-raid');
+        }
+        userTracker.delete(userId);
+      } catch (e) {
+        console.error(`Anti-raid action failed in guild ${guildId} for user ${userId}:`, e);
+      }
+    }
+  }
   // Prefix commands
   const prefixes = cfg.prefixes || [];
   if (prefixes.length === 0) return;
-
   const prefix = prefixes.find(p => message.content.startsWith(p));
   if (!prefix) return;
-
   const args = message.content.slice(prefix.length).trim().split(/ +/);
   const commandName = args.shift().toLowerCase();
-
   const commandsMap = {
     ping: async () => await message.reply('Pong!'),
     help: async () => {
@@ -621,7 +625,6 @@ client.on(Events.MessageCreate, async (message) => {
       await message.reply({ embeds: [embed] });
     },
   };
-
   if (commandsMap[commandName]) {
     try {
       await commandsMap[commandName]();
@@ -633,22 +636,18 @@ client.on(Events.MessageCreate, async (message) => {
     await message.reply({ content: `Unknown prefix command: ${commandName}. Use /help for a list of commands.`, ephemeral: true });
   }
 });
-
 client.on(Events.InteractionCreate, async (interaction) => {
   const interactionAge = Date.now() - interaction.createdTimestamp;
   try {
     console.log(`Processing interaction: type=${interaction.type}, customId=${interaction.customId || 'none'}, user=${interaction.user.id}, guild=${interaction.guildId || 'none'}, isRepliable=${interaction.isRepliable()}, token=${interaction.token.slice(0, 10)}..., age=${interactionAge}ms`);
-
     if (interaction.isChatInputCommand()) {
       const { commandName } = interaction;
       if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && !['ping', 'help', 'getserver', 'invite', 'verification', 'verification2', 'uptime', 'dice', 'coin', 'about', 'say', 'poll', 'usage'].includes(commandName)) {
         return interaction.reply({ content: 'You need the Manage Guild permission to use this command.', ephemeral: true });
       }
-
       if (commandName === 'ping') {
         return interaction.reply('Pong!');
       }
-
       if (commandName === 'invite') {
         const inviteUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&scope=bot%20applications.commands`;
         const embed = new EmbedBuilder()
@@ -658,7 +657,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setFooter({ text: 'Thank you for using the bot!' });
         return interaction.reply({ embeds: [embed] });
       }
-
       if (commandName === 'help') {
         const embed = new EmbedBuilder()
           .setTitle('Bot Commands')
@@ -668,7 +666,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setFooter({ text: 'Use /usage for detailed help!' });
         return interaction.reply({ embeds: [embed] });
       }
-
       if (commandName === 'getserver') {
         const subcommand = interaction.options.getSubcommand();
         if (subcommand === 'info') {
@@ -696,7 +693,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ files: [attachment] });
         }
       }
-
       if (commandName === 'kick') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
           return interaction.reply({ content: 'You need the Kick Members permission to use this command.', ephemeral: true });
@@ -713,9 +709,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'You cannot kick another moderator.', ephemeral: true });
         }
         const reason = interaction.options.getString('reason') || 'No reason provided.';
-        
+       
         await sendUserDM(user, interaction.guild, 'kicked', reason);
-        
+       
         try {
           await member.kick(reason);
           return interaction.reply({ content: `Successfully kicked ${user.tag} from the server. Reason: ${reason}` });
@@ -724,16 +720,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to kick the user. Check bot permissions and role hierarchy.', ephemeral: true });
         }
       }
-
       if (commandName === 'ban') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.BanMembers)) {
           return interaction.reply({ content: 'You need the Ban Members permission to use this command.', ephemeral: true });
         }
         const user = interaction.options.getUser('user');
         const reason = interaction.options.getString('reason') || 'No reason provided.';
-        
+       
         await sendUserDM(user, interaction.guild, 'banned', reason);
-        
+       
         try {
           await interaction.guild.members.ban(user, { reason });
           return interaction.reply({ content: `Successfully banned ${user.tag} from the server. Reason: ${reason}` });
@@ -742,7 +737,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to ban the user. Check bot permissions and role hierarchy.', ephemeral: true });
         }
       }
-
       if (commandName === 'warn') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
           return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
@@ -750,7 +744,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const user = interaction.options.getUser('user');
         const reason = interaction.options.getString('reason');
         const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-        
+       
         if (!member) {
           return interaction.reply({ content: 'User not found in the server.', ephemeral: true });
         }
@@ -760,41 +754,39 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
           return interaction.reply({ content: 'You cannot warn another moderator.', ephemeral: true });
         }
-
         const warning = addWarning(interaction.guild.id, user.id, reason, interaction.user.id);
         const dmSent = await sendUserDM(user, interaction.guild, 'warned', reason);
         const warnings = getWarnings(interaction.guild.id, user.id);
-        
+       
         const embed = new EmbedBuilder()
           .setTitle('User Warned')
           .setDescription(`**User:** ${user.tag} (${user.id})\n**Reason:** ${reason}\n**Total Warnings:** ${warnings.length}`)
           .setColor(Colors.Yellow)
           .setFooter({ text: `Warned by ${interaction.user.tag}` })
           .setTimestamp();
-        
+       
         if (!dmSent) {
           embed.addFields({ name: 'Note', value: 'Could not send DM to user.' });
         }
-        
+       
         return interaction.reply({ embeds: [embed] });
       }
-
       if (commandName === 'warnings') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
           return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
         }
         const user = interaction.options.getUser('user');
         const warnings = getWarnings(interaction.guild.id, user.id);
-        
+       
         if (warnings.length === 0) {
           return interaction.reply({ content: `${user.tag} has no warnings.`, ephemeral: true });
         }
-        
+       
         const embed = new EmbedBuilder()
           .setTitle(`Warnings for ${user.tag}`)
           .setColor(Colors.Yellow)
           .setFooter({ text: `Total: ${warnings.length} warning(s)` });
-        
+       
         warnings.forEach((warning, index) => {
           const moderator = interaction.guild.members.cache.get(warning.moderatorId)?.user.tag || 'Unknown';
           embed.addFields({
@@ -803,24 +795,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
             inline: false
           });
         });
-        
+       
         return interaction.reply({ embeds: [embed] });
       }
-
       if (commandName === 'clearwarnings') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
           return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
         }
         const user = interaction.options.getUser('user');
         const cleared = clearWarnings(interaction.guild.id, user.id);
-        
+       
         if (cleared) {
           return interaction.reply({ content: `Cleared all warnings for ${user.tag}.`, ephemeral: true });
         } else {
           return interaction.reply({ content: `${user.tag} has no warnings to clear.`, ephemeral: true });
         }
       }
-
       if (commandName === 'mute') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
           return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
@@ -855,7 +845,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to mute the user. Check bot permissions and ensure the bot’s role is above the target’s.', ephemeral: true });
         }
       }
-
       if (commandName === 'unmute') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
           return interaction.reply({ content: 'You need the Moderate Members permission to use this command.', ephemeral: true });
@@ -876,13 +865,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to unmute the user. Check bot permissions and ensure the bot’s role is above the target’s.', ephemeral: true });
         }
       }
-
       if (commandName === 'verify-setup') {
         const channel = interaction.options.getChannel('channel');
         if (!channel.isTextBased()) {
           return interaction.reply({ content: 'The selected channel must be a text-based channel.', ephemeral: true });
         }
-
         const prompt = interaction.options.getString('prompt') || 'Click Verify to start. You will receive a captcha to solve.';
         const ping = interaction.options.getString('ping') || '';
         const embedTitle = interaction.options.getString('embed_title') || 'VERIFICATION SECTION';
@@ -892,12 +879,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const rolesOnVerifyStr = interaction.options.getString('roles_on_verify') || '';
         const rolesOnJoin = rolesOnJoinStr ? rolesOnJoinStr.split(',').map(r => r.trim()).filter(Boolean) : [];
         const rolesOnVerify = rolesOnVerifyStr ? rolesOnVerifyStr.split(',').map(r => r.trim()).filter(Boolean) : [];
-
         const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
         if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
           return interaction.reply({ content: 'Bot lacks necessary permissions in the selected channel.', ephemeral: true });
         }
-
         settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
         const oldCfg = settingsStore[interaction.guild.id].verify;
         settingsStore[interaction.guild.id].verify = {
@@ -911,7 +896,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           rolesOnJoin: rolesOnJoin,
           rolesOnVerify: rolesOnVerify
         };
-
         if (oldCfg?.messageId && oldCfg.channelId) {
           const oldChannel = await interaction.guild.channels.fetch(oldCfg.channelId).catch(() => null);
           if (oldChannel) {
@@ -922,7 +906,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
           }
         }
-
         const verifyButton = new ButtonBuilder()
           .setCustomId('verify')
           .setLabel('Verify')
@@ -933,7 +916,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setDescription(prompt)
           .setColor(embedColor);
         if (imageUrl) embed.setImage(imageUrl);
-
         try {
           const message = await channel.send({
             content: ping,
@@ -949,23 +931,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to send verification message. Check bot permissions.', ephemeral: true });
         }
       }
-
       if (commandName === 'verify-test') {
         const cfg = settingsStore[interaction.guild.id]?.verify;
         if (!cfg || !cfg.enabled || !cfg.channelId) {
           return interaction.reply({ content: 'Verification is not set up. Use /verify-setup first.', ephemeral: true });
         }
-
         const channel = await interaction.guild.channels.fetch(cfg.channelId).catch(() => null);
         if (!channel || !channel.isTextBased()) {
           return interaction.reply({ content: 'Verification channel is invalid.', ephemeral: true });
         }
-
         const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
         if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
           return interaction.reply({ content: 'Bot lacks necessary permissions in the verification channel.', ephemeral: true });
         }
-
         const prompt = cfg.prompt || 'Click Verify to start. You will receive a captcha to solve.';
         const ping = cfg.ping || '';
         const embedTitle = cfg.embedTitle || 'VERIFICATION SECTION';
@@ -981,7 +959,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setDescription(prompt)
           .setColor(embedColor);
         if (gifURL) embed.setImage(gifURL);
-
         try {
           await channel.send({
             content: ping,
@@ -994,13 +971,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to send test message. Check bot permissions.', ephemeral: true });
         }
       }
-
       if (commandName === 'verify-disable') {
         const cfg = settingsStore[interaction.guild.id]?.verify;
         if (!cfg || !cfg.enabled) {
           return interaction.reply({ content: 'Verification is already disabled.', ephemeral: true });
         }
-
         if (cfg.messageId && cfg.channelId) {
           const channel = await interaction.guild.channels.fetch(cfg.channelId).catch(() => null);
           if (channel) {
@@ -1011,14 +986,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
           }
         }
-
         settingsStore[interaction.guild.id].verify.enabled = false;
         delete settingsStore[interaction.guild.id].verify.messageId;
         saveSettings();
-
         return interaction.reply({ content: 'Verification disabled and message deleted.', ephemeral: true });
       }
-
       if (commandName === 'verification') {
         const type = interaction.options.getString('type');
         const length = interaction.options.getInteger('length');
@@ -1030,12 +1002,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setFooter({ text: 'This code is for testing purposes.' });
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
-
       if (commandName === 'verification2') {
         const { question, answer } = generateMathQuestion();
         const key = `${interaction.guildId}:${interaction.user.id}:math`;
         captchaMap.set(key, { answer, expires: Date.now() + 1000 * 60 * 5 });
-
         const modal = new ModalBuilder()
           .setCustomId(`math_modal_${interaction.user.id}`)
           .setTitle('Math Verification')
@@ -1048,7 +1018,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 .setRequired(true)
             )
           );
-
         try {
           await interaction.showModal(modal);
         } catch (e) {
@@ -1056,7 +1025,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to show math question. Please try again.', ephemeral: true });
         }
       }
-
       if (commandName === 'cw') {
         const word = interaction.options.getString('word');
         settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
@@ -1069,7 +1037,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: `"${word}" is already censored.`, ephemeral: true });
         }
       }
-
       if (commandName === 'ucw') {
         const word = interaction.options.getString('word');
         settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
@@ -1083,7 +1050,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: `"${word}" is not censored.`, ephemeral: true });
         }
       }
-
       if (commandName === 'cwl') {
         settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
         const words = settingsStore[interaction.guild.id].censoredWords || [];
@@ -1096,12 +1062,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setColor(Colors.Red);
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
-
       if (commandName === 'prefix') {
         const subcommand = interaction.options.getSubcommand();
         settingsStore[interaction.guild.id] = settingsStore[interaction.guild.id] || {};
         settingsStore[interaction.guild.id].prefixes = settingsStore[interaction.guild.id].prefixes || [];
-
         if (subcommand === 'add') {
           const prefix = interaction.options.getString('prefix');
           if (!settingsStore[interaction.guild.id].prefixes.includes(prefix)) {
@@ -1137,13 +1101,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Cleared all prefixes.', ephemeral: true });
         }
       }
-
       if (commandName === 'usage') {
         const specificCommand = interaction.options.getString('command')?.toLowerCase();
         const embed = new EmbedBuilder()
           .setTitle('Command Usage')
           .setColor(Colors.Green);
-
         if (specificCommand) {
           const cmd = commandHelp.find(c => c.name.toLowerCase() === specificCommand || c.name.toLowerCase().startsWith(specificCommand));
           if (!cmd) {
@@ -1152,11 +1114,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           embed.setDescription(`**${cmd.name}**\n${cmd.usage}`);
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
-
         const perPage = 5;
         let page = 0;
         const totalPages = Math.ceil(commandHelp.length / perPage);
-
         const updateEmbed = () => {
           embed.setDescription('');
           const start = page * perPage;
@@ -1166,20 +1126,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
           embed.setFooter({ text: `Page ${page + 1}/${totalPages}` });
         };
-
         updateEmbed();
-
         const row = new ActionRowBuilder()
           .addComponents(
             new ButtonBuilder().setCustomId('prev_usage').setLabel('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
             new ButtonBuilder().setCustomId('next_usage').setLabel('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page === totalPages - 1)
           );
-
         try {
           const msg = await interaction.reply({ embeds: [embed], components: [row], ephemeral: true, fetchReply: true });
-
           const collector = msg.createMessageComponentCollector({ time: 60000 });
-
           collector.on('collect', async (i) => {
             if (i.user.id !== interaction.user.id) {
               return i.reply({ content: 'This button is not for you.', ephemeral: true });
@@ -1198,7 +1153,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
               console.error('Failed to update usage embed:', e);
             }
           });
-
           collector.on('end', () => {
             try {
               msg.edit({ components: [] }).catch(() => {});
@@ -1211,7 +1165,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to display usage. Check bot permissions.', ephemeral: true });
         }
       }
-
       if (commandName === 'lock') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
           return interaction.reply({ content: 'You need Manage Channels permission.', ephemeral: true });
@@ -1232,7 +1185,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to lock channel. Check permissions.', ephemeral: true });
         }
       }
-
       if (commandName === 'unlock') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
           return interaction.reply({ content: 'You need Manage Channels permission.', ephemeral: true });
@@ -1253,7 +1205,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to unlock channel. Check permissions.', ephemeral: true });
         }
       }
-
       if (commandName === 'uptime') {
         const uptime = client.uptime;
         const days = Math.floor(uptime / 86400000);
@@ -1262,18 +1213,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const seconds = Math.floor(uptime / 1000) % 60;
         return interaction.reply(`Uptime: ${days}d ${hours}h ${minutes}m ${seconds}s`);
       }
-
       if (commandName === 'dice') {
         const sides = interaction.options.getInteger('sides') || 6;
         const roll = Math.floor(Math.random() * sides) + 1;
         return interaction.reply(`You rolled a ${roll}! (1-${sides})`);
       }
-
       if (commandName === 'coin') {
         const result = Math.random() < 0.5 ? 'Heads' : 'Tails';
         return interaction.reply(`The coin landed on ${result}!`);
       }
-
       if (commandName === 'role') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
           return interaction.reply({ content: 'You need Manage Roles permission.', ephemeral: true });
@@ -1292,7 +1240,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to assign role. Check hierarchy.', ephemeral: true });
         }
       }
-
       if (commandName === 'audit') {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ViewAuditLog)) {
           return interaction.reply({ content: 'You need View Audit Log permission.', ephemeral: true });
@@ -1316,7 +1263,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to fetch audit logs. Check permissions.', ephemeral: true });
         }
       }
-
       if (commandName === 'about') {
         try {
           const embed = new EmbedBuilder()
@@ -1330,7 +1276,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to display bot info. Check bot permissions.', ephemeral: true });
         }
       }
-
       if (commandName === 'say') {
         const msg = interaction.options.getString('message');
         try {
@@ -1341,7 +1286,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to send message. Check bot permissions.', ephemeral: true });
         }
       }
-
       if (commandName === 'poll') {
         const question = interaction.options.getString('question');
         const optionsStr = interaction.options.getString('options');
@@ -1360,13 +1304,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: 'Failed to create poll. Check bot permissions.', ephemeral: true });
         }
       }
+      if (commandName === 'antiraid') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+          return interaction.reply({ content: 'You need Administrator permission to use this command.', ephemeral: true });
+        }
+        const subcommand = interaction.options.getSubcommand();
+        settingsStore[guildId] = settingsStore[guildId] || {};
+        settingsStore[guildId].antiraid = settingsStore[guildId].antiraid || { enabled: false, messageLimit: 5, timeWindow: 10000 };
+        if (subcommand === 'enable') {
+          settingsStore[guildId].antiraid.enabled = true;
+          saveSettings();
+          return interaction.reply({ content: 'Anti-raid enabled. Spam detection active (5 msgs/10s threshold).', ephemeral: true });
+        } else if (subcommand === 'disable') {
+          settingsStore[guildId].antiraid.enabled = false;
+          saveSettings();
+          return interaction.reply({ content: 'Anti-raid disabled.', ephemeral: true });
+        }
+      }
     }
-
     if (interaction.isButton() && (interaction.customId === 'prev_usage' || interaction.customId === 'next_usage')) {
-      // Handled in usage command collector
+      // command coll3ct
       return;
     }
-
     if (interaction.isButton() && interactionAge > 15000) {
       console.warn(`Interaction expired: type=${interaction.type}, customId=${interaction.customId}, user=${interaction.user.id}, age=${interactionAge}ms`);
       if (interaction.isRepliable()) {
@@ -1374,7 +1333,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       return;
     }
-
     if (interaction.isButton() && interaction.customId === 'verify') {
       const guildId = interaction.guildId;
       const cfg = settingsStore[guildId];
@@ -1383,21 +1341,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({ content: 'Verification is not enabled for this server. Contact an admin.', ephemeral: true });
         return;
       }
-
       const channel = await interaction.guild.channels.fetch(cfg.verify.channelId).catch(() => null);
       if (!channel || !channel.isTextBased()) {
         console.warn(`Verify channel ${cfg.verify.channelId} invalid for guild ${guildId}`);
         await interaction.reply({ content: 'Verification channel is invalid. Contact an admin.', ephemeral: true });
         return;
       }
-
       const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
       if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.EmbedLinks])) {
         console.warn(`Bot lacks ViewChannel, SendMessages, or EmbedLinks permissions in channel ${cfg.verify.channelId} for guild ${guildId}`);
         await interaction.reply({ content: 'Bot lacks permissions to send messages in the verification channel.', ephemeral: true });
         return;
       }
-
       const answer = randomText(4);
       const avatarURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
       let buffer, text;
@@ -1408,18 +1363,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({ content: 'Failed to generate captcha. Please try again.', ephemeral: true });
         return;
       }
-
       const key = `${guildId}:${interaction.user.id}`;
       captchaMap.set(key, { answer, expires: Date.now() + 1000 * 60 * 5 });
       console.log(`Generated captcha for ${key}: ${answer} (length: ${answer.length}, raw: ${JSON.stringify(answer)})`);
-
       const attachment = new AttachmentBuilder(buffer, { name: 'captcha.png' });
       const enter = new ButtonBuilder()
         .setCustomId(`enter_${interaction.user.id}`)
         .setLabel('Enter solution')
         .setStyle(ButtonStyle.Success);
       const row = new ActionRowBuilder().addComponents(enter);
-
       await interaction.reply({
         content: 'Solve the captcha shown below and click *Enter solution* to type your answer.',
         files: [attachment],
@@ -1429,14 +1381,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       console.log(`Sent captcha response to user ${interaction.user.id} in guild ${guildId}`);
       return;
     }
-
     if (interaction.isButton() && interaction.customId.startsWith('enter_')) {
       const userId = interaction.customId.split('_')[1];
       if (userId !== interaction.user.id) {
         await interaction.reply({ content: 'This button is not for you.', ephemeral: true });
         return;
       }
-
       const modal = new ModalBuilder()
         .setCustomId(`modal_${interaction.user.id}`)
         .setTitle('Enter Captcha')
@@ -1449,7 +1399,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
               .setRequired(true)
           )
         );
-
       try {
         await interaction.showModal(modal);
       } catch (e) {
@@ -1458,7 +1407,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       return;
     }
-
     if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('modal_')) {
       const userId = interaction.customId.split('_')[1];
       if (userId !== interaction.user.id) {
@@ -1480,27 +1428,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({ content: 'Captcha expired. Please click Verify again.', ephemeral: true });
         return;
       }
-
       console.log(`Comparing in guild ${interaction.guildId}: raw='${rawAnswer}', sanitized='${answer}', stored='${stored.answer}'`);
       if (answer === stored.answer.toUpperCase()) {
         const cfg = settingsStore[interaction.guildId];
         const rolesOnJoin = Array.isArray(cfg?.verify?.rolesOnJoin) ? cfg.verify.rolesOnJoin : [];
         const rolesOnVerify = Array.isArray(cfg?.verify?.rolesOnVerify) ? cfg.verify.rolesOnVerify : [];
-
         const botMember = await interaction.guild.members.fetch(client.user.id).catch(() => null);
         if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
           console.error(`Bot lacks ManageRoles permission in guild ${interaction.guildId}`);
           await interaction.reply({ content: 'Bot lacks permission to manage roles. Contact an admin.', ephemeral: true });
           return;
         }
-
         const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
         if (!member) {
           console.error(`Member ${interaction.user.id} not found in guild ${interaction.guildId}`);
           await interaction.reply({ content: 'Member not found in guild.', ephemeral: true });
           return;
         }
-
         for (const r of rolesOnJoin) {
           try {
             const role = interaction.guild.roles.cache.get(r) || interaction.guild.roles.cache.find(x => x.name === r);
@@ -1512,7 +1456,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             console.error(`Failed to remove role ${r} from member ${interaction.user.id} in guild ${interaction.guildId}:`, e);
           }
         }
-
         for (const r of rolesOnVerify) {
           try {
             const role = interaction.guild.roles.cache.get(r) || interaction.guild.roles.cache.find(x => x.name === r);
@@ -1526,7 +1469,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             console.error(`Failed to add role ${r} to member ${interaction.user.id} in guild ${interaction.guildId}:`, e);
           }
         }
-
         captchaMap.delete(key);
         await interaction.reply({ content: '✅ Verified! Roles have been updated.', ephemeral: true });
         console.log(`User ${interaction.user.id} verified in guild ${interaction.guildId}`);
@@ -1537,7 +1479,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       return;
     }
-
     if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('math_modal_')) {
       const userId = interaction.customId.split('_')[2];
       if (userId !== interaction.user.id) {
@@ -1558,7 +1499,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({ content: 'Math question expired. Use /verification2 again.', ephemeral: true });
         return;
       }
-
       if (parseInt(answer) === stored.answer) {
         captchaMap.delete(key);
         await interaction.reply({ content: '✅ Correct! You passed the math verification.', ephemeral: true });
@@ -1570,7 +1510,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       return;
     }
-
     if (interaction.isButton() && interaction.customId.startsWith('enter_')) {
       const userId = interaction.customId.split('_')[1];
       if (userId !== interaction.user.id) {
@@ -1618,8 +1557,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 });
-
-// ... rest of the express app code remains the same
+// ... always same ig
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -1630,22 +1568,18 @@ app.use(session({
   cookie: { maxAge: 1000 * 60 * 60 * 24 }
 }));
 app.use(express.static('.'));
-
 function isAuthenticated(req, res, next) {
   if (!req.session || !req.session.user) return res.status(401).json({ error: 'Not authenticated' });
   if (!allowedUserIds.includes(req.session.user.id)) return res.status(403).json({ error: 'Access denied: Unauthorized user' });
   return next();
 }
-
 app.get('/login', (req, res) => {
   const url = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify%20guilds`;
   res.redirect(url);
 });
-
 app.get('/logout', (req, res) => {
   req.session.destroy(() => { res.redirect('/'); });
 });
-
 app.get('/callback', async (req, res) => {
   const code = req.query.code;
   if (!code) return res.status(400).send('No code provided.');
@@ -1669,17 +1603,14 @@ app.get('/callback', async (req, res) => {
     res.status(500).send('OAuth failed');
   }
 });
-
 app.get('/api/me', isAuthenticated, (req, res) => {
   return res.json({ user: req.session.user, guilds: req.session.guilds || [] });
 });
-
 app.get('/api/server/:id', isAuthenticated, async (req, res) => {
   const id = req.params.id;
   try {
     const guild = await client.guilds.fetch(id).catch(() => null);
     if (!guild) return res.status(404).json({ error: 'Guild not found or bot not in guild' });
-
     const members = await guild.members.fetch().catch(() => null);
     const humans = members ? members.filter(m => !m.user.bot).size : 0;
     const bots = members ? members.filter(m => m.user.bot).size : 0;
@@ -1687,7 +1618,6 @@ app.get('/api/server/:id', isAuthenticated, async (req, res) => {
     const channels = guild.channels.cache
       .filter(c => c.isTextBased())
       .map(c => ({ id: c.id, name: c.name, type: c.type }));
-
     const payload = {
       id: guild.id,
       name: guild.name,
@@ -1704,26 +1634,21 @@ app.get('/api/server/:id', isAuthenticated, async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch guild info' });
   }
 });
-
 app.post('/api/settings', isAuthenticated, async (req, res) => {
   try {
     const body = req.body;
     if (!body || !body.guildId) return res.status(400).json({ error: 'guildId required' });
-
     const guildId = body.guildId;
     const guild = await client.guilds.fetch(guildId).catch(() => null);
     if (!guild) return res.status(404).json({ error: 'Guild not found or bot not present' });
-
     const member = await guild.members.fetch(req.session.user.id).catch(() => null);
     if (!member) return res.status(403).json({ error: 'You must be a guild member' });
     if (!member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
       return res.status(403).json({ error: 'Manage Guild permission required' });
     }
-
     settingsStore[guildId] = settingsStore[guildId] || {};
     const oldChannelId = settingsStore[guildId].verify?.channelId;
     settingsStore[guildId].verify = body.verify || settingsStore[guildId].verify || { enabled: false };
-
     if (settingsStore[guildId].verify.enabled && (!settingsStore[guildId].verify.channelId || body.verify.channelId !== oldChannelId || !settingsStore[guildId].verify.messageId)) {
       const channel = await guild.channels.fetch(body.verify.channelId).catch(() => null);
       if (!channel || !channel.isTextBased()) {
@@ -1783,7 +1708,6 @@ app.post('/api/settings', isAuthenticated, async (req, res) => {
       }
       delete settingsStore[guildId].verify.messageId;
     }
-
     saveSettings();
     return res.json({ success: true });
   } catch (err) {
@@ -1791,7 +1715,6 @@ app.post('/api/settings', isAuthenticated, async (req, res) => {
     return res.status(500).json({ error: 'Failed to save settings' });
   }
 });
-
 app.post('/api/test-verify/:id', isAuthenticated, async (req, res) => {
   const guildId = req.params.id;
   try {
@@ -1800,18 +1723,14 @@ app.post('/api/test-verify/:id', isAuthenticated, async (req, res) => {
     const member = await guild.members.fetch(req.session.user.id).catch(() => null);
     if (!member) return res.status(403).json({ error: 'You must be a member' });
     if (!member.permissions.has(PermissionsBitField.Flags.ManageGuild)) return res.status(403).json({ error: 'Manage Guild required' });
-
     const cfg = settingsStore[guildId];
     if (!cfg || !cfg.verify || !cfg.verify.channelId) return res.status(400).json({ error: 'Verify channel not configured' });
-
     const channel = await guild.channels.fetch(cfg.verify.channelId).catch(() => null);
     if (!channel || !channel.isTextBased()) return res.status(404).json({ error: 'Verify channel not found' });
-
     const botMember = await guild.members.fetch(client.user.id).catch(() => null);
     if (!botMember || !channel.permissionsFor(botMember).has([PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.EmbedLinks])) {
       return res.status(403).json({ error: `Bot lacks ViewChannel, SendMessages, ReadMessageHistory, or EmbedLinks permissions in channel ${cfg.verify.channelId}` });
     }
-
     let message = cfg.verify.messageId ? await channel.messages.fetch(cfg.verify.messageId).catch(() => null) : null;
     if (!message) {
       const prompt = cfg.verify.prompt || 'Click Verify to start.';
@@ -1845,10 +1764,7 @@ app.post('/api/test-verify/:id', isAuthenticated, async (req, res) => {
     return res.status(500).json({ error: 'Failed to send test message' });
   }
 });
-
 app.listen(PORT, () => {
   console.log(`Dashboard available at http://localhost:${PORT}`);
 });
-
 client.login(BOT_TOKEN);
-
